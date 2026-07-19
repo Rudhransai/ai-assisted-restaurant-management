@@ -61,3 +61,8 @@ MAIL_FROM = "Restaurant <rudhransaiccs428@gmail.com>"
 MAIL_SMTP_HOST = "smtp.gmail.com"
 MAIL_SMTP_PORT = "587"
 MAIL_SMTP_USER = "rudhransaiccs428@gmail.com"
+
+[deployment]
+deploymentTarget = "autoscale"
+run = ["sh", "-c", "cd restaurant-backend && npm run start:server"]
+build = ["sh", "-c", "cd restaurant-backend && npm install && npm run build"]
