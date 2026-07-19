@@ -1,0 +1,32 @@
+Restaurant Reservation Module - Feature Explanations (Selected: A)
+
+Scope: SMS/WhatsApp + automated reminders
+
+Planned implementation steps:
+
+1) Fix/wire automated reminders
+   - Verify if ReminderScheduler is started in src/app.ts
+   - If not started: instantiate ReminderScheduler(dbStore.pool) only if Postgres is active, then start it
+   - If started: align ReminderScheduler queries with current schema from RestaurantDbStore.initialize()
+   - Prefer using RestaurantDbStore.sendReminders() for actual delivery and notifications logging
+
+2) Extend notification sender (mail -> add whatsapp/sms)
+   - Update src/integrations/notificationSender.ts to support multiple types
+   - Add env var validation and safe logging
+   - Add Twilio WhatsApp/SMS sending implementation (only when env vars exist)
+
+3) Wire waitlist notifications and reminders to multi-channel sender
+   - In src/services/restaurantDbStore.ts:
+     - notifyWaitlistEntry(): call sendNotification with type whatsapp first (or mail if not configured)
+     - sendReminders(): send via mail first (if email exists; else whatsapp)
+   - Update notifications.status based on send result
+
+4) Dependencies
+   - Update restaurant-backend/package.json to include twilio (and any needed types)
+
+5) Verify
+   - Run typecheck/build
+   - Manual test:
+     - Create waitlist entry -> Notify -> ensures notifications rows updated and provider used
+     - Create reservation -> trigger reminders send -> ensures reminder_sent updated and notifications logged
+   - Automated test (runtime): reminders scheduler should send without manual trigger
