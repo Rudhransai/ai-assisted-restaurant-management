@@ -7,6 +7,7 @@ export interface SendNotificationInput {
   type: NotificationType;
   recipient: string; // email or phone, depending on type
   content: string;
+  subject?: string;
 }
 
 
@@ -63,7 +64,7 @@ export async function sendNotification(
       const info = await transporter.sendMail({
         from,
         to: input.recipient,
-        subject: 'Restaurant notification',
+        subject: input.subject ?? 'Restaurant notification',
         text: input.content,
       });
 

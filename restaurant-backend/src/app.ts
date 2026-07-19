@@ -209,6 +209,42 @@ app.post('/api/v1/reminders/send', requireAuth(['manager']), async (_req, res, n
   }
 });
 
+// --- Dishes ---
+app.get('/api/v1/dishes', requireAuth(['customer', 'manager']), async (_req, res, next) => {
+  try {
+    const dishes = await dbStore.getDishes();
+    res.json({ success: true, data: dishes });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// --- Orders ---
+app.post('/api/v1/orders', requireAuth(['customer']), async (req: AuthenticatedRequest, res, next) => {
+  try {
+    const { tableId, tableNumber, partySize, items, paymentMethod } = req.body ?? {};
+    if (!tableId || !items || !Array.isArray(items) || items.length === 0) {
+      throw new AppError(400, 'tableId and at least one item are required');
+    }
+    const user = await authService.getUserById(req.auth!.userId);
+    if (!user) throw new AppError(404, 'User not found');
+
+    const order = await dbStore.createOrder({
+      guestName: user.name,
+      email: user.email,
+      tableId,
+      tableNumber: tableNumber ?? tableId,
+      partySize: Number(partySize) || 1,
+      items,
+      paymentMethod: paymentMethod ?? 'card',
+    });
+
+    res.status(201).json({ success: true, data: order });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Public reservation entry (customer can also use authenticated table-watch)
 app.post('/api/v1/public/reservation', async (req, res, next) => {
   try {

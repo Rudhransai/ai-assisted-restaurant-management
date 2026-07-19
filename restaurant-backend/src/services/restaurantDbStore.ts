@@ -1,6 +1,6 @@
- import { Pool } from 'pg';
+import { Pool } from 'pg';
 import { sendNotification } from '../integrations/notificationSender';
-import { renderRestaurantMailContent } from '../integrations/mailTemplate';
+import { renderRestaurantMailContent, mailSubject } from '../integrations/mailTemplate';
 
 export type TableStatus = 'Available' | 'Occupied' | 'Reserved';
 
@@ -54,6 +54,36 @@ export interface NotificationItem {
   content: string;
   status: string;
   createdAt: string;
+}
+
+export interface DishItem {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  category: string;
+  available: boolean;
+}
+
+export interface OrderLineItem {
+  dishId: string;
+  dishName: string;
+  quantity: number;
+  unitPrice: number;
+}
+
+export interface OrderRecord {
+  id: string;
+  guestName: string;
+  email: string;
+  tableId: string;
+  tableNumber: string;
+  partySize: number;
+  totalAmount: number;
+  status: string;
+  paymentMethod: string;
+  createdAt: string;
+  items: OrderLineItem[];
 }
 
 export class RestaurantDbStore {
@@ -125,6 +155,66 @@ export class RestaurantDbStore {
       ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS preferred_table_id TEXT DEFAULT ''
     `);
 
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS dishes (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        price NUMERIC(10,2) NOT NULL,
+        category TEXT NOT NULL,
+        available BOOLEAN DEFAULT TRUE
+      )
+    `);
+
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS orders (
+        id TEXT PRIMARY KEY,
+        guest_name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        table_id TEXT NOT NULL,
+        table_number TEXT NOT NULL,
+        party_size INT NOT NULL,
+        total_amount NUMERIC(10,2) NOT NULL,
+        status TEXT NOT NULL DEFAULT 'confirmed',
+        payment_method TEXT NOT NULL DEFAULT 'card',
+        created_at TEXT NOT NULL
+      )
+    `);
+
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS order_items (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        dish_id TEXT NOT NULL,
+        dish_name TEXT NOT NULL,
+        quantity INT NOT NULL,
+        unit_price NUMERIC(10,2) NOT NULL
+      )
+    `);
+
+    const dishCount = await this.pool.query('SELECT COUNT(*)::int AS count FROM dishes');
+    if ((dishCount.rows[0]?.count ?? 0) === 0) {
+      await this.pool.query(`
+        INSERT INTO dishes (id, name, description, price, category, available) VALUES
+        ('d1','Soup of the Day','Rich, slow-cooked broth with seasonal vegetables',6.50,'Starters',TRUE),
+        ('d2','Garlic Bread','Toasted sourdough with herb butter and roasted garlic',4.50,'Starters',TRUE),
+        ('d3','Bruschetta','Grilled bread with tomato, basil, and olive oil',5.50,'Starters',TRUE),
+        ('d4','Caesar Salad','Crisp romaine, parmesan, croutons, house caesar dressing',8.00,'Starters',TRUE),
+        ('d5','Margherita Pizza','San Marzano tomato, fresh mozzarella, basil',14.00,'Mains',TRUE),
+        ('d6','Pasta Carbonara','Spaghetti, pancetta, egg, parmesan, black pepper',13.50,'Mains',TRUE),
+        ('d7','Grilled Chicken','Herb-marinated breast, seasonal vegetables, lemon jus',16.00,'Mains',TRUE),
+        ('d8','Veg Burger','Quinoa-black bean patty, lettuce, tomato, chipotle mayo',12.50,'Mains',TRUE),
+        ('d9','Fish & Chips','Beer-battered cod, thick-cut chips, tartare sauce',15.00,'Mains',TRUE),
+        ('d10','Chocolate Lava Cake','Warm dark chocolate cake, vanilla ice cream',7.50,'Desserts',TRUE),
+        ('d11','Ice Cream Sundae','Three scoops, warm fudge, whipped cream, cherry',6.00,'Desserts',TRUE),
+        ('d12','Cheesecake','New York style with strawberry compote',6.50,'Desserts',TRUE),
+        ('d13','Lemonade','Freshly squeezed with mint',3.50,'Drinks',TRUE),
+        ('d14','Masala Chai','Spiced tea with milk',2.50,'Drinks',TRUE),
+        ('d15','Fresh Juice','Orange, apple, or watermelon',3.00,'Drinks',TRUE),
+        ('d16','House Wine (glass)','Red or white, ask your server',6.00,'Drinks',TRUE)
+      `);
+    }
+
     const tableCount = await this.pool.query('SELECT COUNT(*)::int AS count FROM tables');
     if ((tableCount.rows[0]?.count ?? 0) === 0) {
       await this.pool.query(`
@@ -195,6 +285,90 @@ export class RestaurantDbStore {
       'SELECT id, table_number AS "tableNumber", capacity, zone, status FROM tables ORDER BY table_number'
     );
     return result.rows as TableItem[];
+  }
+
+  async getDishes(): Promise<DishItem[]> {
+    const result = await this.pool.query(
+      'SELECT id, name, description, price::float AS price, category, available FROM dishes WHERE available = TRUE ORDER BY category, name'
+    );
+    return result.rows as DishItem[];
+  }
+
+  async createOrder(data: {
+    guestName: string;
+    email: string;
+    tableId: string;
+    tableNumber: string;
+    partySize: number;
+    items: Array<{ dishId: string; dishName: string; quantity: number; unitPrice: number }>;
+    paymentMethod: string;
+  }): Promise<OrderRecord> {
+    const orderId = `ord${Date.now()}`;
+    const createdAt = new Date().toISOString();
+    const totalAmount = data.items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+
+    await this.pool.query(
+      'INSERT INTO orders (id, guest_name, email, table_id, table_number, party_size, total_amount, status, payment_method, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [orderId, data.guestName, data.email, data.tableId, data.tableNumber, data.partySize, totalAmount, 'confirmed', data.paymentMethod, createdAt]
+    );
+
+    for (const item of data.items) {
+      await this.pool.query(
+        'INSERT INTO order_items (id, order_id, dish_id, dish_name, quantity, unit_price) VALUES ($1,$2,$3,$4,$5,$6)',
+        [`oi${Date.now()}-${item.dishId}`, orderId, item.dishId, item.dishName, item.quantity, item.unitPrice]
+      );
+    }
+
+    // Mark table as Reserved when an order is placed
+    await this.pool.query('UPDATE tables SET status = $1 WHERE id = $2', ['Reserved', data.tableId]);
+
+    // Send confirmation email
+    const itemsSummary = data.items
+      .map((i) => `  - ${i.dishName} x${i.quantity}  ${(i.unitPrice * i.quantity).toFixed(2)}`)
+      .join('\n');
+    const content = renderRestaurantMailContent({
+      guestName: data.guestName,
+      action: 'order_confirmation',
+      tableNumber: data.tableNumber,
+      orderTotal: `${totalAmount.toFixed(2)}`,
+      orderItems: itemsSummary,
+      orderId,
+    });
+
+    if (data.email) {
+      const result = await sendNotification({
+        type: 'mail',
+        recipient: data.email,
+        content,
+        subject: mailSubject('order_confirmation'),
+      });
+
+      await this.pool.query(
+        'INSERT INTO notifications (id, type, recipient, content, status, created_at) VALUES ($1,$2,$3,$4,$5,$6)',
+        [
+          `n${Date.now()}`,
+          'mail',
+          data.email,
+          content,
+          result.ok ? 'sent' : `failed:${result.error ?? 'unknown'}`,
+          createdAt,
+        ]
+      );
+    }
+
+    return {
+      id: orderId,
+      guestName: data.guestName,
+      email: data.email,
+      tableId: data.tableId,
+      tableNumber: data.tableNumber,
+      partySize: data.partySize,
+      totalAmount,
+      status: 'confirmed',
+      paymentMethod: data.paymentMethod,
+      createdAt,
+      items: data.items,
+    };
   }
 
   async updateTableStatus(tableId: string, status: TableStatus) {
