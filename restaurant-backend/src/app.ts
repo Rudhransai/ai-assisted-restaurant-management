@@ -182,15 +182,6 @@ app.post('/api/v1/waitlist/:id/assign', requireAuth(['manager']), async (req, re
   }
 });
 
-app.post('/api/v1/tables/:id/status', requireAuth(['manager']), async (req, res, next) => {
-  try {
-    const table = await executeWithFallback((store) => store.updateTableStatus(req.params.id as string, req.body.status));
-    res.json({ success: true, data: table });
-  } catch (error) {
-    next(error);
-  }
-});
-
 app.post('/api/v1/reservations/:id/no-show', requireAuth(['manager']), async (req, res, next) => {
   try {
     const reservation = await executeWithFallback((store) => store.markReservationNoShow(req.params.id as string));
@@ -204,6 +195,45 @@ app.post('/api/v1/reminders/send', requireAuth(['manager']), async (_req, res, n
   try {
     const count = await executeWithFallback((store) => store.sendReminders());
     res.json({ success: true, sent: count });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// --- Manager: table watches overview ---
+app.get('/api/v1/table-watches', requireAuth(['manager']), async (_req, res, next) => {
+  try {
+    const watches = await dbStore.getAllTableWatches();
+    res.json({ success: true, data: watches });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// --- Manager: all orders + dish stats ---
+app.get('/api/v1/orders', requireAuth(['manager']), async (_req, res, next) => {
+  try {
+    const orders = await dbStore.getOrders();
+    res.json({ success: true, data: orders });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/v1/dishes/stats', requireAuth(['manager']), async (_req, res, next) => {
+  try {
+    const stats = await dbStore.getDishStats();
+    res.json({ success: true, data: stats });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Clear / update table status — returns notifiedCount when set to Available
+app.post('/api/v1/tables/:id/status', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { table, notifiedCount } = await dbStore.updateTableStatus(req.params.id as string, req.body.status);
+    res.json({ success: true, data: table, notifiedCount });
   } catch (error) {
     next(error);
   }

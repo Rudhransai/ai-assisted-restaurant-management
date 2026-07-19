@@ -287,6 +287,59 @@ export class RestaurantDbStore {
     return result.rows as TableItem[];
   }
 
+  async getAllTableWatches(): Promise<Array<{ tableId: string; tableNumber: string; waitingCount: number; notifiedCount: number }>> {
+    const result = await this.pool.query(`
+      SELECT tw.table_id AS "tableId", t.table_number AS "tableNumber",
+             COUNT(*) FILTER (WHERE tw.status = 'Waiting') AS "waitingCount",
+             COUNT(*) FILTER (WHERE tw.status = 'Notified') AS "notifiedCount"
+      FROM table_watch tw
+      JOIN tables t ON t.id = tw.table_id
+      WHERE tw.status IN ('Waiting', 'Notified')
+      GROUP BY tw.table_id, t.table_number
+    `);
+    return result.rows.map((r) => ({
+      tableId: r.tableId,
+      tableNumber: r.tableNumber,
+      waitingCount: Number(r.waitingCount),
+      notifiedCount: Number(r.notifiedCount),
+    }));
+  }
+
+  async getOrders(): Promise<Array<{
+    id: string; guestName: string; email: string; tableNumber: string;
+    partySize: number; totalAmount: number; status: string; paymentMethod: string; createdAt: string;
+    items: Array<{ dishName: string; quantity: number; unitPrice: number }>;
+  }>> {
+    const ordersResult = await this.pool.query(`
+      SELECT id, guest_name AS "guestName", email, table_number AS "tableNumber",
+             party_size AS "partySize", total_amount::float AS "totalAmount",
+             status, payment_method AS "paymentMethod", created_at AS "createdAt"
+      FROM orders ORDER BY created_at DESC
+    `);
+    const itemsResult = await this.pool.query(`
+      SELECT order_id AS "orderId", dish_name AS "dishName", quantity, unit_price::float AS "unitPrice"
+      FROM order_items ORDER BY order_id
+    `);
+    const itemsByOrder = new Map<string, Array<{ dishName: string; quantity: number; unitPrice: number }>>();
+    for (const item of itemsResult.rows) {
+      if (!itemsByOrder.has(item.orderId)) itemsByOrder.set(item.orderId, []);
+      itemsByOrder.get(item.orderId)!.push({ dishName: item.dishName, quantity: item.quantity, unitPrice: item.unitPrice });
+    }
+    return ordersResult.rows.map((o) => ({ ...o, items: itemsByOrder.get(o.id) ?? [] }));
+  }
+
+  async getDishStats(): Promise<Array<{ dishName: string; totalOrdered: number; revenue: number }>> {
+    const result = await this.pool.query(`
+      SELECT dish_name AS "dishName",
+             SUM(quantity)::int AS "totalOrdered",
+             SUM(quantity * unit_price)::float AS "revenue"
+      FROM order_items
+      GROUP BY dish_name
+      ORDER BY "totalOrdered" DESC
+    `);
+    return result.rows;
+  }
+
   async getDishes(): Promise<DishItem[]> {
     const result = await this.pool.query(
       'SELECT id, name, description, price::float AS price, category, available FROM dishes WHERE available = TRUE ORDER BY category, name'
@@ -371,18 +424,19 @@ export class RestaurantDbStore {
     };
   }
 
-  async updateTableStatus(tableId: string, status: TableStatus) {
+  async updateTableStatus(tableId: string, status: TableStatus): Promise<{ table: TableItem | null; notifiedCount: number }> {
     const result = await this.pool.query(
       'UPDATE tables SET status = $1 WHERE id = $2 RETURNING id, table_number AS "tableNumber", capacity, zone, status',
       [status, tableId]
     );
     const table = result.rows[0] ?? null;
 
+    let notifiedCount = 0;
     if (table && status === 'Available') {
-      await this.notifyTableWatchers(tableId, table.tableNumber);
+      notifiedCount = await this.notifyTableWatchers(tableId, table.tableNumber);
     }
 
-    return table;
+    return { table, notifiedCount };
   }
 
   async createReservation(data: {
