@@ -1,5 +1,4 @@
-import dotenv from 'dotenv';
-dotenv.config();
+import 'dotenv/config';
 
 import express from 'express';
 import path from 'path';
@@ -53,10 +52,15 @@ app.get('/api/v1/health', (_req, res) => {
 });
 
 // --- Auth routes ---
+const loginMeta = (req: express.Request) => ({
+  ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || '',
+  userAgent: req.headers['user-agent'] ?? '',
+});
+
 app.post('/api/v1/auth/register', async (req, res, next) => {
   try {
     const { email, password, name, phone } = req.body ?? {};
-    const result = await authService.registerCustomer({ email, password, name, phone });
+    const result = await authService.registerCustomer({ email, password, name, phone }, loginMeta(req));
     res.status(201).json({ success: true, data: result });
   } catch (error) {
     next(error);
@@ -69,7 +73,7 @@ app.post('/api/v1/auth/login', async (req, res, next) => {
     if (!email || !password) {
       throw new AppError(400, 'Email and password are required');
     }
-    const result = await authService.login(email, password, role);
+    const result = await authService.login(email, password, role, loginMeta(req));
     res.json({ success: true, data: result });
   } catch (error) {
     next(error);
@@ -83,6 +87,16 @@ app.get('/api/v1/auth/me', requireAuth(), async (req: AuthenticatedRequest, res,
       throw new AppError(404, 'User not found');
     }
     res.json({ success: true, data: user });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Manager: recent login/registration audit trail
+app.get('/api/v1/auth/login-events', requireAuth(['manager']), async (_req, res, next) => {
+  try {
+    const events = await authService.getRecentLoginEvents();
+    res.json({ success: true, data: events });
   } catch (error) {
     next(error);
   }
@@ -309,7 +323,7 @@ const __dirname = path.dirname(__filename);
 const distPath = path.resolve(__dirname, '../dist');
 if (fs.existsSync(path.join(distPath, 'index.html'))) {
   app.use(express.static(distPath));
-  app.get('*', (_req, res) => {
+  app.get(/^(?!\/api\/).*/, (_req, res) => {
     res.sendFile(path.join(distPath, 'index.html'));
   });
 }

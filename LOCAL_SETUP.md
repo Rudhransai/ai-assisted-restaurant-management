@@ -70,7 +70,14 @@ npm install
 
 ---
 
-## Step 5 — Run the app (two terminals)
+## Step 5 — Run the app
+
+### Option A — One click (VS Code task)
+Open the repo folder in VS Code, then run **Terminal → Run Task… → "Run app (backend + frontend)"**.
+This starts the backend (port 3000) and the Vite frontend (port 5000) together.
+You can also press **F5** ("Debug Backend API") to run/debug the backend with breakpoints.
+
+### Option B — Two terminals
 
 Open **two** VS Code terminals:
 

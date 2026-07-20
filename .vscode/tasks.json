@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Backend API (port 3000)",
+      "type": "shell",
+      "command": "npm run dev:server",
+      "options": { "cwd": "${workspaceFolder}/restaurant-backend" },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": { "group": "restaurant", "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "Frontend (Vite, port 5000)",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": { "cwd": "${workspaceFolder}/restaurant-backend" },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": { "group": "restaurant", "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "Run app (backend + frontend)",
+      "dependsOn": ["Backend API (port 3000)", "Frontend (Vite, port 5000)"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    }
+  ]
+}
