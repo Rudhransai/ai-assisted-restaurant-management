@@ -309,7 +309,7 @@ const __dirname = path.dirname(__filename);
 const distPath = path.resolve(__dirname, '../dist');
 if (fs.existsSync(path.join(distPath, 'index.html'))) {
   app.use(express.static(distPath));
-  app.get('*', (_req, res) => {
+  app.get('/{*splat}', (_req, res) => {
     res.sendFile(path.join(distPath, 'index.html'));
   });
 }

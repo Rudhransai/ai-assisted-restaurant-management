@@ -51,18 +51,12 @@ Customers register themselves at `/register`.
 - `POST /api/v1/tables/:id/status` *(manager)* — triggers email to table-watchers when set to Available
 - `POST /api/v1/reminders/send` *(manager)*
 
-## Email notifications (optional)
-Set these environment variables to enable real email delivery:
+## Email notifications
+Gmail SMTP is configured and active. All of the following are set as Replit environment variables/secrets:
+- `MAIL_SMTP_HOST`, `MAIL_SMTP_PORT`, `MAIL_SMTP_USER`, `MAIL_FROM` — set as shared env vars
+- `MAIL_SMTP_PASS` — set as a Replit Secret (Gmail App Password)
 
-```
-MAIL_SMTP_HOST=smtp.example.com
-MAIL_SMTP_PORT=587
-MAIL_SMTP_USER=your@email.com
-MAIL_SMTP_PASS=yourpassword
-MAIL_FROM="Restaurant <your@email.com>"
-```
-
-Without them, notification attempts are recorded in the `notifications` table with `status = failed:Missing MAIL_* environment variables` — the app continues working normally.
+Emails are sent for: reservation reminders, table-available notifications, and order confirmations.
 
 ## Twilio (WhatsApp/SMS — optional)
 ```
