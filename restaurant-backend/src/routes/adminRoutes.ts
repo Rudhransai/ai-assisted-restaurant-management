@@ -82,7 +82,7 @@ adminRoutes.post('/verify-mail', requireAuth(['manager']), async (req, res, next
     res.json({
       success: testResult.ok,
       message: testResult.ok
-        ? `Test email sent successfully to ${testEmail}!
+        ? `Test email sent successfully to ${testEmail}!`
         : `Failed to send email: ${testResult.error}`,
       configStatus,
       provider: testResult.provider,

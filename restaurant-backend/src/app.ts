@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { closeDatabaseConnection, pool, verifyDatabaseConnection } from './config/db';
 import { RestaurantDbStore } from './services/restaurantDbStore';
+import { InventoryDbStore } from './services/inventoryDbStore';
 import { restaurantStore as memoryStore } from './services/restaurantStore';
 import { errorHandler } from './middleware/errorHandler';
 import { ReminderScheduler } from './services/reminderScheduler';
@@ -28,6 +29,7 @@ interface RestaurantStoreLike {
 
 const app = express();
 const dbStore = new RestaurantDbStore(pool);
+const inventoryStore = new InventoryDbStore(pool);
 const authService = new AuthService(pool);
 const { requireAuth } = createAuthMiddleware(authService);
 let activeStore: RestaurantStoreLike = memoryStore;
@@ -278,6 +280,104 @@ app.post('/api/v1/orders', requireAuth(['customer']), async (req: AuthenticatedR
   }
 });
 
+// ── Inventory / Module 2 routes (all manager-protected) ─────────────────────
+
+app.get('/api/v1/inventory/ingredients', requireAuth(['manager']), async (_req, res, next) => {
+  try { res.json({ success: true, data: await inventoryStore.getIngredients() }); } catch (e) { next(e); }
+});
+
+app.post('/api/v1/inventory/ingredients', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { name, unit, currentStock, minimumStock, costPerUnit, vendorId } = req.body ?? {};
+    if (!name || !unit) throw new AppError(400, 'name and unit are required');
+    const item = await inventoryStore.addIngredient({
+      name, unit,
+      currentStock: Number(currentStock) || 0,
+      minimumStock: Number(minimumStock) || 0,
+      costPerUnit: Number(costPerUnit) || 0,
+      vendorId: vendorId ?? '',
+    });
+    res.status(201).json({ success: true, data: item });
+  } catch (e) { next(e); }
+});
+
+app.get('/api/v1/inventory/vendors', requireAuth(['manager']), async (_req, res, next) => {
+  try { res.json({ success: true, data: await inventoryStore.getVendors() }); } catch (e) { next(e); }
+});
+
+app.post('/api/v1/inventory/vendors', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { name, phone, email, itemsSupplied } = req.body ?? {};
+    if (!name) throw new AppError(400, 'name is required');
+    const vendor = await inventoryStore.addVendor({ name, phone: phone ?? '', email: email ?? '', itemsSupplied: itemsSupplied ?? '' });
+    res.status(201).json({ success: true, data: vendor });
+  } catch (e) { next(e); }
+});
+
+app.get('/api/v1/inventory/purchases', requireAuth(['manager']), async (_req, res, next) => {
+  try { res.json({ success: true, data: await inventoryStore.getPurchases() }); } catch (e) { next(e); }
+});
+
+app.post('/api/v1/inventory/purchases', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { vendorId, vendorName, ingredientId, ingredientName, quantity, unit, cost, purchaseDate } = req.body ?? {};
+    if (!ingredientId || !ingredientName || !quantity || !cost) throw new AppError(400, 'ingredientId, ingredientName, quantity and cost are required');
+    const purchase = await inventoryStore.addPurchase({
+      vendorId: vendorId ?? '', vendorName: vendorName ?? '',
+      ingredientId, ingredientName,
+      quantity: Number(quantity), unit: unit ?? 'kg',
+      cost: Number(cost), purchaseDate: purchaseDate ?? new Date().toISOString().split('T')[0],
+    });
+    res.status(201).json({ success: true, data: purchase });
+  } catch (e) { next(e); }
+});
+
+app.get('/api/v1/inventory/wastage', requireAuth(['manager']), async (_req, res, next) => {
+  try { res.json({ success: true, data: await inventoryStore.getWastageLogs() }); } catch (e) { next(e); }
+});
+
+app.post('/api/v1/inventory/wastage', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { ingredientId, ingredientName, quantity, unit, reason, cost, date } = req.body ?? {};
+    if (!ingredientId || !ingredientName || !quantity) throw new AppError(400, 'ingredientId, ingredientName and quantity are required');
+    const log = await inventoryStore.addWastage({
+      ingredientId, ingredientName,
+      quantity: Number(quantity), unit: unit ?? 'kg',
+      reason: reason ?? '', cost: Number(cost) || 0,
+      date: date ?? new Date().toISOString().split('T')[0],
+    });
+    res.status(201).json({ success: true, data: log });
+  } catch (e) { next(e); }
+});
+
+app.get('/api/v1/inventory/stock-entries', requireAuth(['manager']), async (_req, res, next) => {
+  try { res.json({ success: true, data: await inventoryStore.getStockEntries() }); } catch (e) { next(e); }
+});
+
+app.post('/api/v1/inventory/stock-entries', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { ingredientId, ingredientName, entryType, quantity, date, notes } = req.body ?? {};
+    if (!ingredientId || !ingredientName || !entryType || quantity === undefined) throw new AppError(400, 'ingredientId, ingredientName, entryType and quantity are required');
+    const entry = await inventoryStore.addStockEntry({
+      ingredientId, ingredientName, entryType,
+      quantity: Number(quantity),
+      date: date ?? new Date().toISOString().split('T')[0],
+      notes: notes ?? '',
+    });
+    res.status(201).json({ success: true, data: entry });
+  } catch (e) { next(e); }
+});
+
+app.get('/api/v1/inventory/analytics', requireAuth(['manager']), async (_req, res, next) => {
+  try { res.json({ success: true, data: await inventoryStore.getInventoryAnalytics() }); } catch (e) { next(e); }
+});
+
+// ── Sales & Menu Analytics (Module 3) ────────────────────────────────────────
+
+app.get('/api/v1/analytics/sales', requireAuth(['manager']), async (_req, res, next) => {
+  try { res.json({ success: true, data: await inventoryStore.getSalesAnalytics() }); } catch (e) { next(e); }
+});
+
 // Public reservation entry (customer can also use authenticated table-watch)
 app.post('/api/v1/public/reservation', async (req, res, next) => {
   try {
@@ -321,6 +421,7 @@ app.listen(PORT, async () => {
   try {
     await verifyDatabaseConnection();
     await dbStore.initialize();
+    await inventoryStore.initialize();
     await authService.initialize();
     activeStore = dbStore;
     console.log(`Server successfully booted up on port ${PORT} using PostgreSQL`);
