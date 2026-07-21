@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI-Assisted Restaurant Management</title>
+  <meta name="description" content="A full-stack restaurant management system with AI-assisted features — reservations, waitlist, orders, and real-time table management." />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #fff7ed 0%, #fef3c7 50%, #fff7ed 100%);
+      min-height: 100vh;
+      color: #1c1917;
+    }
+
+    /* ── Nav ── */
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1.25rem 2rem;
+      border-bottom: 1px solid #fed7aa;
+      background: rgba(255,255,255,0.7);
+      backdrop-filter: blur(8px);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 700;
+      font-size: 1.05rem;
+      color: #92400e;
+      text-decoration: none;
+    }
+    .nav-brand svg { flex-shrink: 0; }
+    .nav-links { display: flex; gap: 0.75rem; }
+    .btn-ghost {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.45rem 1rem;
+      border-radius: 8px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      text-decoration: none;
+      color: #78350f;
+      border: 1px solid #fcd34d;
+      background: rgba(255,255,255,0.6);
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .btn-ghost:hover { background: #fef9c3; border-color: #f59e0b; }
+
+    /* ── Hero ── */
+    .hero {
+      text-align: center;
+      padding: 5rem 1.5rem 3.5rem;
+      max-width: 720px;
+      margin: 0 auto;
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.3rem 0.9rem;
+      border-radius: 999px;
+      background: #fef3c7;
+      border: 1px solid #fcd34d;
+      color: #92400e;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 1.5rem;
+    }
+    h1 {
+      font-size: clamp(2rem, 5vw, 3rem);
+      font-weight: 800;
+      line-height: 1.15;
+      color: #1c1917;
+      margin-bottom: 1.1rem;
+    }
+    h1 span { color: #b45309; }
+    .subtitle {
+      font-size: 1.1rem;
+      line-height: 1.65;
+      color: #57534e;
+      margin-bottom: 2.5rem;
+    }
+    .cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.9rem;
+      justify-content: center;
+    }
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.6rem;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      text-decoration: none;
+      background: #b45309;
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(180,83,9,0.3);
+      transition: background 0.15s, transform 0.1s;
+    }
+    .btn-primary:hover { background: #92400e; transform: translateY(-1px); }
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.6rem;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      text-decoration: none;
+      background: #fff;
+      color: #1c1917;
+      border: 1px solid #d6d3d1;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      transition: border-color 0.15s, transform 0.1s;
+    }
+    .btn-secondary:hover { border-color: #a8a29e; transform: translateY(-1px); }
+
+    /* ── Credentials card ── */
+    .creds-section {
+      max-width: 600px;
+      margin: 0 auto 4rem;
+      padding: 0 1.5rem;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #e7e5e4;
+      border-radius: 14px;
+      padding: 1.75rem 2rem;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+    .card h2 {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #78350f;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .cred-table { width: 100%; border-collapse: collapse; }
+    .cred-table th {
+      text-align: left;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: #a8a29e;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 0.3rem 0.5rem 0.5rem;
+    }
+    .cred-table td {
+      padding: 0.45rem 0.5rem;
+      font-size: 0.9rem;
+      border-top: 1px solid #f5f5f4;
+    }
+    .cred-table td:first-child { font-weight: 600; color: #44403c; width: 30%; }
+    code {
+      background: #fef3c7;
+      padding: 0.15rem 0.45rem;
+      border-radius: 5px;
+      font-size: 0.85em;
+      color: #92400e;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+
+    /* ── Features ── */
+    .features-section {
+      max-width: 900px;
+      margin: 0 auto 5rem;
+      padding: 0 1.5rem;
+    }
+    .section-label {
+      text-align: center;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #b45309;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.6rem;
+    }
+    .section-title {
+      text-align: center;
+      font-size: 1.7rem;
+      font-weight: 800;
+      color: #1c1917;
+      margin-bottom: 2.5rem;
+    }
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 1rem;
+    }
+    .feature-card {
+      background: #fff;
+      border: 1px solid #e7e5e4;
+      border-radius: 12px;
+      padding: 1.4rem 1.5rem;
+      box-shadow: 0 1px 6px rgba(0,0,0,0.05);
+      transition: box-shadow 0.15s, transform 0.15s;
+    }
+    .feature-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.1); transform: translateY(-2px); }
+    .feature-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      background: #fef3c7;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.3rem;
+      margin-bottom: 0.85rem;
+    }
+    .feature-card h3 { font-size: 0.95rem; font-weight: 700; color: #1c1917; margin-bottom: 0.4rem; }
+    .feature-card p { font-size: 0.85rem; color: #78716c; line-height: 1.55; }
+
+    /* ── Stack ── */
+    .stack-section {
+      background: #1c1917;
+      color: #e7e5e4;
+      padding: 3.5rem 1.5rem;
+      text-align: center;
+    }
+    .stack-section .section-label { color: #fbbf24; }
+    .stack-section .section-title { color: #fafaf9; }
+    .pills { display: flex; flex-wrap: wrap; gap: 0.6rem; justify-content: center; }
+    .pill {
+      padding: 0.35rem 0.9rem;
+      border-radius: 999px;
+      background: #292524;
+      border: 1px solid #44403c;
+      font-size: 0.82rem;
+      font-weight: 500;
+      color: #d6d3d1;
+    }
+
+    /* ── Footer ── */
+    footer {
+      text-align: center;
+      padding: 2rem 1.5rem;
+      font-size: 0.85rem;
+      color: #a8a29e;
+      border-top: 1px solid #e7e5e4;
+    }
+    footer a { color: #b45309; text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+  <!-- Nav -->
+  <nav>
+    <a class="nav-brand" href="#">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#b45309" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 11l19-9-9 19-2-8-8-2z"/>
+      </svg>
+      Restaurant Manager
+    </a>
+    <div class="nav-links">
+      <a class="btn-ghost" href="https://github.com/Rudhransai/ai-assisted-restaurant-management" target="_blank" rel="noopener">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub
+      </a>
+      <a class="btn-ghost" href="https://ai-assisted-restaurant-management--rudhransai18.replit.app" target="_blank" rel="noopener">
+        🚀 Live App
+      </a>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="badge">Full-Stack · React · Express · PostgreSQL</div>
+    <h1>AI-Assisted <span>Restaurant</span><br/>Management</h1>
+    <p class="subtitle">
+      A complete restaurant management system — handle reservations, manage the waitlist, track orders, control table availability, and send email notifications, all from one dashboard.
+    </p>
+    <div class="cta-row">
+      <a class="btn-primary" href="https://ai-assisted-restaurant-management--rudhransai18.replit.app" target="_blank" rel="noopener">
+        🚀 Open Live App
+      </a>
+      <a class="btn-secondary" href="https://github.com/Rudhransai/ai-assisted-restaurant-management" target="_blank" rel="noopener">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        View on GitHub
+      </a>
+    </div>
+  </section>
+
+  <!-- Credentials -->
+  <div class="creds-section">
+    <div class="card">
+      <h2>🔑 Demo Login Credentials</h2>
+      <table class="cred-table">
+        <thead>
+          <tr>
+            <th>Role</th>
+            <th>Email</th>
+            <th>Password</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Manager</td>
+            <td><code>manager@restaurant.com</code></td>
+            <td><code>manager123</code></td>
+          </tr>
+          <tr>
+            <td>Customer</td>
+            <td colspan="2">Register at the live app → "Create an account"</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Features -->
+  <section class="features-section">
+    <p class="section-label">What it does</p>
+    <h2 class="section-title">Everything a restaurant needs</h2>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">🪑</div>
+        <h3>Table Management</h3>
+        <p>Real-time table status — Available, Occupied, Reserved. Manager can toggle with one click.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📋</div>
+        <h3>Reservations & Waitlist</h3>
+        <p>Add walk-ins to the waitlist, assign them to tables, and notify them by email when ready.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🍽️</div>
+        <h3>Customer Orders</h3>
+        <p>Customers browse the menu, select dishes, and submit orders from the customer dashboard.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔔</div>
+        <h3>Table Watch Alerts</h3>
+        <p>Customers can watch for a table — get an automatic email when their preferred table is free.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📧</div>
+        <h3>Email Notifications</h3>
+        <p>Gmail SMTP integration sends reminders, waitlist alerts, and order confirmations automatically.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📊</div>
+        <h3>Manager Dashboard</h3>
+        <p>Full overview of reservations, waitlist, orders, and dish stats — all in one place.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Stack -->
+  <section class="stack-section">
+    <p class="section-label">Tech Stack</p>
+    <h2 class="section-title" style="margin-bottom:1.5rem;">Built with modern tools</h2>
+    <div class="pills">
+      <span class="pill">React 19</span>
+      <span class="pill">TypeScript</span>
+      <span class="pill">Vite</span>
+      <span class="pill">Tailwind CSS</span>
+      <span class="pill">Express 5</span>
+      <span class="pill">Node.js 20</span>
+      <span class="pill">PostgreSQL</span>
+      <span class="pill">JWT Auth</span>
+      <span class="pill">bcrypt</span>
+      <span class="pill">Nodemailer</span>
+      <span class="pill">tsx (hot reload)</span>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <p>
+      <a href="https://github.com/Rudhransai/ai-assisted-restaurant-management" target="_blank" rel="noopener">GitHub Repository</a>
+      &nbsp;·&nbsp;
+      <a href="https://ai-assisted-restaurant-management--rudhransai18.replit.app" target="_blank" rel="noopener">Live App on Replit</a>
+    </p>
+    <p style="margin-top:0.5rem;">Built with ❤️ · AI-Assisted Restaurant Management</p>
+  </footer>
+
+</body>
+</html>
