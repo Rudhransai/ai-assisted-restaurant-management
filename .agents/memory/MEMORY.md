@@ -1,1 +1,2 @@
 - [Staff Module architecture](staff-module.md) — Module 4 fully implemented as staffDbStore.ts + routes in app.ts + Staff tab in Dashboard.tsx; all 7 tables auto-created on boot with seed data.
+- [Feedback Module architecture](feedback-module.md) — Module 5 fully implemented; rule-based sentiment (DistilBERT output schema) + keyword categorization (bart-large-mnli style); 40 seeded reviews; 8 frontend sub-tabs.
