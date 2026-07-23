@@ -17,6 +17,7 @@ import { AuthService } from './services/authService';
 import { createAuthMiddleware } from './middleware/authMiddleware';
 import type { AuthenticatedRequest } from './middleware/authMiddleware';
 import { AppError } from './middleware/errorHandler';
+import { adminRoutes } from './routes/adminRoutes';
 
 interface RestaurantStoreLike {
   getSnapshot(): Promise<unknown> | unknown;
@@ -575,6 +576,9 @@ app.post('/api/v1/public/reservation', async (req, res, next) => {
 });
 
 // In production, serve the Vite-built React frontend and handle SPA routing
+// --- Admin routes (verify-mail, db-health, user list, table viewer) ---
+app.use('/api/v1/admin', adminRoutes);
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const distPath = path.resolve(__dirname, '../dist');
