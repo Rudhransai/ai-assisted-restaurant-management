@@ -1,0 +1,116 @@
+Module 5 – Customer Feedback Aggregator
+Assumptions:
+- Kaggle/Seeded reviews
+- Overall sentiment: DistilBERT
+- Review categorization: facebook/bart-large-mnli
+- Theme = Category
+- Trend analysis from historical review, rating, sentiment and category data.
+
+
+Multi-platform Review Collection
+Explanation: Collect reviews from Kaggle/CSV/Seeded data into a single database.
+Model/Logic: None
+Required Tables
+customers(id,name,email,phone,created_at)
+customer_feedback(id,customer_id,review_text,rating,source,review_date,created_at)
+Suggested Analytics (up to 10)
+Reviews by source
+Reviews per day
+Average rating by source
+Centralized Feedback Dashboard
+Explanation: Single dashboard for all reviews and KPIs.
+Model/Logic: None
+Required Tables
+customer_feedback
+Suggested Analytics (up to 10)
+Total reviews
+Average rating
+Recent reviews
+Rating distribution
+Monthly reviews
+Reviews by source
+Top categories
+Positive/Negative ratio
+Reviews by customer
+Review growth
+AI-Powered Sentiment Analysis
+Explanation: Example: "The food was delicious but delivery was slow." -> Neutral
+Model/Logic: distilbert-base-uncased-finetuned-sst-2-english
+Required Tables
+customer_feedback(+sentiment,confidence_score)
+Suggested Analytics (up to 10)
+Positive reviews
+Neutral reviews
+Negative reviews
+Review Categorization
+Explanation: Example: "The food was delicious but delivery was slow." -> Food, Delivery
+Model/Logic: facebook/bart-large-mnli
+Required Tables
+categories(id,category_name)
+feedback_category_mapping(feedback_id,category_id)
+Suggested Analytics (up to 10)
+Category distribution
+Top category
+Least discussed category
+Category-wise ratings
+Theme & Trend Identification
+Explanation: Theme is the assigned category. Trends are identified from historical review data over time.
+Model/Logic: SQL Analytics
+Required Tables
+customer_feedback
+feedback_category_mapping
+categories
+Suggested Analytics (up to 10)
+Top themes
+Weekly review growth
+Monthly review growth
+Positive sentiment trend
+Negative sentiment trend
+Average rating trend
+Category trend
+Top improving category
+Top declining category
+Peak review days
+Customer Satisfaction Tracking
+Explanation: Uses ratings and sentiments to measure satisfaction.
+Model/Logic: Analytics
+Required Tables
+customer_feedback
+Suggested Analytics (up to 10)
+Average rating
+Positive %
+Neutral %
+Negative %
+Monthly satisfaction
+Reputation Monitoring
+Explanation: Tracks reputation over time.
+Model/Logic: Analytics
+Required Tables
+customer_feedback
+Suggested Analytics (up to 10)
+Average rating trend
+Sentiment trend
+1-star trend
+5-star trend
+Review volume
+Monthly comparison
+Customer satisfaction trend
+Reputation score
+Returning customer trend
+Negative review growth
+Weekly Feedback Summaries
+Explanation: Weekly summary generated from stored analytics.
+Model/Logic: Rule-based (LLM optional)
+Required Tables
+weekly_feedback_summary(id,week_start,week_end,total_reviews,positive_reviews,neutral_reviews,negative_reviews,average_rating,top_category,trending_metric,generated_at)
+Suggested Analytics (up to 10)
+Weekly total reviews
+Weekly avg rating
+Top category
+Top trend
+Positive %
+Negative %
+Review growth
+Best day
+Worst day
+New reviews

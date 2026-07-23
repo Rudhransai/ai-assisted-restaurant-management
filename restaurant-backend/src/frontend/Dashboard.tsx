@@ -57,7 +57,34 @@ type AttendanceRecord = { id: string; employeeId: string; employeeName: string; 
 type PayrollSummary = { id: string; employeeId: string; employeeName: string; month: string; workingDays: number; workingHours: number; overtimeHours: number; leaveDays: number; generatedOn: string };
 type StaffAnalytics = { totalEmployees: number; activeEmployees: number; todayAttendance: { present: number; absent: number; on_leave: number }; pendingLeaveRequests: number; avgWorkingHoursThisMonth: number; topLateArrivals: { name: string; total_late: number }[] };
 
-type ActiveTab = 'floor' | 'reservations' | 'waitlist' | 'orders' | 'inventory' | 'analytics' | 'staff';
+// Module 5 – Customer Feedback
+type FeedbackCustomer = { id: string; name: string; email: string; phone: string; createdAt: string };
+type FeedbackItem = { id: string; customerId: string; customerName: string; reviewText: string; rating: number; source: string; reviewDate: string; sentiment: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL'; confidenceScore: number; categories: string[]; createdAt: string };
+type FeedbackCategory = { id: string; categoryName: string };
+type WeeklySummary = { id: string; weekStart: string; weekEnd: string; totalReviews: number; positiveReviews: number; neutralReviews: number; negativeReviews: number; averageRating: number; topCategory: string; trendingMetric: string; generatedAt: string };
+type FeedbackAnalytics = {
+  totalReviews: number; averageRating: number;
+  positiveCount: number; neutralCount: number; negativeCount: number;
+  positivePercent: number; neutralPercent: number; negativePercent: number;
+  recentReviews: FeedbackItem[]; reviewGrowthPercent: number;
+  ratingDistribution: { rating: number; count: number }[];
+  reviewsBySource: { source: string; count: number; avgRating: number }[];
+  reviewsByCustomer: { customerName: string; count: number; avgRating: number }[];
+  categoryDistribution: { categoryName: string; count: number; avgRating: number }[];
+  topCategory: string; leastCategory: string;
+  monthlyReviews: { month: string; count: number; avgRating: number }[];
+  weeklyReviews: { week: string; count: number }[];
+  ratingTrend: { month: string; avgRating: number }[];
+  sentimentTrend: { month: string; positive: number; negative: number; neutral: number }[];
+  peakReviewDays: { dayName: string; count: number }[];
+  categoryTrend: { month: string; categoryName: string; count: number }[];
+  topImprovingCategory: string; topDecliningCategory: string;
+  monthlySatisfaction: { month: string; positive: number; neutral: number; negative: number; total: number }[];
+  reputationScore: number; ratingTrendDirection: 'up' | 'down' | 'stable';
+  oneStarCount: number; fiveStarCount: number; negativeGrowthPercent: number;
+};
+
+type ActiveTab = 'floor' | 'reservations' | 'waitlist' | 'orders' | 'inventory' | 'analytics' | 'staff' | 'feedback';
 
 const tabLabels: Record<ActiveTab, string> = {
   floor: '🏠 Floor Plan',
@@ -67,6 +94,7 @@ const tabLabels: Record<ActiveTab, string> = {
   inventory: '📦 Inventory',
   analytics: '📊 Analytics',
   staff: '👥 Staff',
+  feedback: '💬 Feedback',
 };
 
 const MEAL_PERIOD_COLORS: Record<string, string> = {
@@ -180,6 +208,17 @@ export function Dashboard() {
   const [attForm, setAttForm] = useState({ employeeId: '', attendanceDate: today, checkIn: '09:00', checkOut: '17:00', breakMinutes: '60', attendanceStatus: 'Present' as 'Present' | 'Absent' | 'Leave' | 'Half-Day', shiftId: '' });
   const [payrollMonth, setPayrollMonth] = useState(today.slice(0, 7));
 
+  // Feedback state (Module 5)
+  const [feedbackItems, setFeedbackItems] = useState<FeedbackItem[]>([]);
+  const [feedbackAnalytics, setFeedbackAnalytics] = useState<FeedbackAnalytics | null>(null);
+  const [feedbackCustomers, setFeedbackCustomers] = useState<FeedbackCustomer[]>([]);
+  const [feedbackCategories, setFeedbackCategories] = useState<FeedbackCategory[]>([]);
+  const [weeklySummaries, setWeeklySummaries] = useState<WeeklySummary[]>([]);
+  const [feedbackSubTab, setFeedbackSubTab] = useState<'overview' | 'reviews' | 'sentiment' | 'categories' | 'trends' | 'satisfaction' | 'reputation' | 'weekly'>('overview');
+  const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
+  const [feedbackForm, setFeedbackForm] = useState({ customerName: '', reviewText: '', rating: '5', source: 'Google', reviewDate: today });
+  const [showFeedbackForm, setShowFeedbackForm] = useState(false);
+
   // ── Data fetching ────────────────────────────────────────────────────────
 
   const refreshDashboard = async () => {
@@ -266,12 +305,30 @@ export function Dashboard() {
     if (an) setStaffAnalytics(an);
   };
 
+  const refreshFeedback = async () => {
+    const parse = async (r: Response) => { const d = await r.json().catch(() => ({})); return r.ok ? (d.data ?? d) : null; };
+    const [fbRes, anaRes, custRes, catRes, wkRes] = await Promise.all([
+      authFetch('/api/v1/feedback'),
+      authFetch('/api/v1/feedback/analytics'),
+      authFetch('/api/v1/feedback/customers'),
+      authFetch('/api/v1/feedback/categories'),
+      authFetch('/api/v1/feedback/weekly-summary'),
+    ]);
+    const [fb, ana, cust, cat, wk] = await Promise.all([parse(fbRes), parse(anaRes), parse(custRes), parse(catRes), parse(wkRes)]);
+    if (fb) setFeedbackItems(fb);
+    if (ana) setFeedbackAnalytics(ana);
+    if (cust) setFeedbackCustomers(cust);
+    if (cat) setFeedbackCategories(cat);
+    if (wk) setWeeklySummaries(wk);
+  };
+
   useEffect(() => { void refreshDashboard(); }, []);
   useEffect(() => {
     if (activeTab === 'orders') void refreshOrders();
     if (activeTab === 'inventory') void refreshInventory();
     if (activeTab === 'analytics') { void refreshOrders(); void refreshSalesAnalytics(); }
     if (activeTab === 'staff') void refreshStaff();
+    if (activeTab === 'feedback') void refreshFeedback();
   }, [activeTab]);
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -1685,6 +1742,585 @@ export function Dashboard() {
                             </tr>
                           ))}
                           {payroll.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-slate-400 italic">No payroll generated yet. Select a month and click Generate.</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                  </SectionCard>
+                </div>
+              )}
+
+            </div>
+          )}
+
+          {/* ══ CUSTOMER FEEDBACK AGGREGATOR (MODULE 5) ══════════════════════ */}
+          {activeTab === 'feedback' && (
+            <div className="space-y-6">
+              {feedbackMsg && (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 flex items-center justify-between">
+                  {feedbackMsg}
+                  <button onClick={() => setFeedbackMsg(null)} className="ml-4 text-emerald-500 hover:text-emerald-700 cursor-pointer">✕</button>
+                </div>
+              )}
+
+              {/* Sub-tabs */}
+              <nav className="flex flex-wrap gap-2">
+                {(['overview', 'reviews', 'sentiment', 'categories', 'trends', 'satisfaction', 'reputation', 'weekly'] as const).map(t => (
+                  <button key={t} onClick={() => setFeedbackSubTab(t)}
+                    className={`rounded-full px-4 py-2 text-sm font-semibold capitalize cursor-pointer transition ${feedbackSubTab === t ? 'bg-slate-900 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                    {t === 'overview' ? '📊 Overview' : t === 'reviews' ? '📝 Reviews' : t === 'sentiment' ? '🤖 Sentiment' : t === 'categories' ? '🏷️ Categories' : t === 'trends' ? '📈 Trends' : t === 'satisfaction' ? '😊 Satisfaction' : t === 'reputation' ? '⭐ Reputation' : '📋 Weekly'}
+                  </button>
+                ))}
+                <button onClick={() => void refreshFeedback()} className="ml-auto rounded-full border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 cursor-pointer">↻ Refresh</button>
+              </nav>
+
+              {/* ─ Overview ─ */}
+              {feedbackSubTab === 'overview' && feedbackAnalytics && (
+                <div className="space-y-6">
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <StatCard label="Total Reviews" value={feedbackAnalytics.totalReviews} tone="text-slate-800" sub={`${feedbackAnalytics.reviewGrowthPercent >= 0 ? '+' : ''}${feedbackAnalytics.reviewGrowthPercent}% vs last 30 days`} />
+                    <StatCard label="Average Rating" value={`${feedbackAnalytics.averageRating} ★`} tone="text-amber-600" />
+                    <StatCard label="Positive Reviews" value={`${feedbackAnalytics.positivePercent}%`} tone="text-emerald-700" sub={`${feedbackAnalytics.positiveCount} reviews`} />
+                    <StatCard label="Reputation Score" value={`${feedbackAnalytics.reputationScore}/100`} tone={feedbackAnalytics.reputationScore >= 70 ? 'text-emerald-700' : feedbackAnalytics.reputationScore >= 50 ? 'text-amber-600' : 'text-rose-600'} />
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <StatCard label="Negative Reviews" value={`${feedbackAnalytics.negativePercent}%`} tone="text-rose-600" sub={`${feedbackAnalytics.negativeCount} reviews`} />
+                    <StatCard label="Neutral Reviews" value={`${feedbackAnalytics.neutralPercent}%`} tone="text-slate-600" sub={`${feedbackAnalytics.neutralCount} reviews`} />
+                    <StatCard label="Top Category" value={feedbackAnalytics.topCategory} tone="text-purple-700" />
+                  </div>
+
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <SectionCard title="Rating Distribution" sub="Breakdown of star ratings across all reviews.">
+                      <div className="space-y-2">
+                        {[5,4,3,2,1].map(star => {
+                          const d = feedbackAnalytics.ratingDistribution.find(r => r.rating === star);
+                          const count = d?.count ?? 0;
+                          const pct = feedbackAnalytics.totalReviews === 0 ? 0 : Math.round((count / feedbackAnalytics.totalReviews) * 100);
+                          return (
+                            <div key={star} className="flex items-center gap-3 text-sm">
+                              <span className="w-10 text-right font-semibold text-amber-600">{star} ★</span>
+                              <div className="flex-1 bg-slate-100 rounded-full h-3 overflow-hidden">
+                                <div className="h-3 rounded-full bg-amber-400 transition-all" style={{ width: `${pct}%` }} />
+                              </div>
+                              <span className="w-12 text-slate-500 text-xs">{count} ({pct}%)</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </SectionCard>
+
+                    <SectionCard title="Reviews by Source" sub="Multi-platform collection overview.">
+                      <div className="space-y-3">
+                        {feedbackAnalytics.reviewsBySource.map(s => (
+                          <div key={s.source} className="flex items-center justify-between rounded-xl bg-slate-50 border border-slate-200 px-4 py-3">
+                            <span className="font-semibold text-slate-800">{s.source}</span>
+                            <div className="flex items-center gap-4 text-sm">
+                              <span className="text-slate-600">{s.count} reviews</span>
+                              <span className="font-bold text-amber-600">{s.avgRating.toFixed(1)} ★</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </SectionCard>
+
+                    <SectionCard title="Recent Reviews" sub="Latest 10 customer reviews.">
+                      <div className="space-y-3 max-h-80 overflow-y-auto">
+                        {feedbackAnalytics.recentReviews.map(r => (
+                          <div key={r.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                            <div className="flex items-start justify-between gap-2 mb-1">
+                              <span className="font-semibold text-slate-800 text-sm">{r.customerName}</span>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="text-amber-500 text-sm">{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</span>
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${r.sentiment === 'POSITIVE' ? 'bg-emerald-100 text-emerald-700' : r.sentiment === 'NEGATIVE' ? 'bg-rose-100 text-rose-700' : 'bg-slate-200 text-slate-600'}`}>{r.sentiment}</span>
+                              </div>
+                            </div>
+                            <p className="text-xs text-slate-600 line-clamp-2">{r.reviewText}</p>
+                            <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+                              <span className="text-[10px] text-slate-400">{r.source} · {r.reviewDate}</span>
+                              {r.categories.map(c => <span key={c} className="text-[10px] bg-purple-100 text-purple-700 rounded-full px-1.5 py-0.5">{c}</span>)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </SectionCard>
+
+                    <SectionCard title="Reviews by Customer" sub="Top contributing customers.">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm text-left">
+                          <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                            <tr><th className="p-3">Customer</th><th className="p-3">Reviews</th><th className="p-3">Avg Rating</th></tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {feedbackAnalytics.reviewsByCustomer.map(c => (
+                              <tr key={c.customerName} className="hover:bg-slate-50">
+                                <td className="p-3 font-medium text-slate-800">{c.customerName}</td>
+                                <td className="p-3 text-sky-700 font-semibold">{c.count}</td>
+                                <td className="p-3 text-amber-600 font-semibold">{c.avgRating.toFixed(1)} ★</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </SectionCard>
+                  </div>
+                </div>
+              )}
+
+              {/* ─ Reviews ─ */}
+              {feedbackSubTab === 'reviews' && (
+                <div className="space-y-6">
+                  <SectionCard title="Add Review" sub="Manually enter a customer review with automatic AI sentiment & categorization." action={
+                    <button onClick={() => setShowFeedbackForm(p => !p)} className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 cursor-pointer">{showFeedbackForm ? 'Hide' : '+ Add Review'}</button>
+                  }>
+                    {showFeedbackForm && (
+                      <form onSubmit={async e => {
+                        e.preventDefault();
+                        const res = await authFetch('/api/v1/feedback', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ ...feedbackForm, rating: Number(feedbackForm.rating) }),
+                        });
+                        const d = await res.json().catch(() => ({}));
+                        if (res.ok) {
+                          setFeedbackMsg('Review added and analyzed successfully!');
+                          setFeedbackForm({ customerName: '', reviewText: '', rating: '5', source: 'Google', reviewDate: today });
+                          setShowFeedbackForm(false);
+                          void refreshFeedback();
+                        } else {
+                          setFeedbackMsg(d.message ?? 'Failed to add review');
+                        }
+                      }} className="space-y-3">
+                        <div className="grid gap-3 md:grid-cols-4">
+                          <input required value={feedbackForm.customerName} onChange={e => setFeedbackForm({ ...feedbackForm, customerName: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Customer Name" />
+                          <select value={feedbackForm.source} onChange={e => setFeedbackForm({ ...feedbackForm, source: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5">
+                            {['Google', 'Yelp', 'Zomato', 'TripAdvisor', 'Direct'].map(s => <option key={s}>{s}</option>)}
+                          </select>
+                          <select value={feedbackForm.rating} onChange={e => setFeedbackForm({ ...feedbackForm, rating: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5">
+                            {[5,4,3,2,1].map(r => <option key={r} value={r}>{r} Star{r !== 1 ? 's' : ''}</option>)}
+                          </select>
+                          <input type="date" value={feedbackForm.reviewDate} onChange={e => setFeedbackForm({ ...feedbackForm, reviewDate: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" />
+                        </div>
+                        <textarea required rows={3} value={feedbackForm.reviewText} onChange={e => setFeedbackForm({ ...feedbackForm, reviewText: e.target.value })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Review text (AI will automatically detect sentiment and categories)..." />
+                        <div className="flex justify-end"><button type="submit" className="rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 cursor-pointer">Submit & Analyze</button></div>
+                      </form>
+                    )}
+                  </SectionCard>
+
+                  <SectionCard title={`All Reviews (${feedbackItems.length})`} sub="Complete multi-platform review collection.">
+                    <div className="space-y-3 max-h-[600px] overflow-y-auto">
+                      {feedbackItems.map(r => (
+                        <div key={r.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                          <div className="flex items-start justify-between gap-3 flex-wrap">
+                            <div>
+                              <p className="font-bold text-slate-800">{r.customerName}</p>
+                              <p className="text-xs text-slate-400 mt-0.5">{r.source} · {r.reviewDate}</p>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-amber-500">{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</span>
+                              <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${r.sentiment === 'POSITIVE' ? 'bg-emerald-100 text-emerald-700' : r.sentiment === 'NEGATIVE' ? 'bg-rose-100 text-rose-700' : 'bg-slate-200 text-slate-600'}`}>{r.sentiment}</span>
+                              <span className="text-xs text-slate-400">{(r.confidenceScore * 100).toFixed(0)}% conf.</span>
+                            </div>
+                          </div>
+                          <p className="mt-2 text-sm text-slate-700">{r.reviewText}</p>
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {r.categories.map(c => <span key={c} className="text-[11px] bg-purple-100 text-purple-700 rounded-full px-2 py-0.5">{c}</span>)}
+                          </div>
+                        </div>
+                      ))}
+                      {feedbackItems.length === 0 && <p className="text-sm text-slate-400 italic text-center py-6">No reviews yet. Add one above.</p>}
+                    </div>
+                  </SectionCard>
+                </div>
+              )}
+
+              {/* ─ Sentiment Analysis ─ */}
+              {feedbackSubTab === 'sentiment' && feedbackAnalytics && (
+                <div className="space-y-6">
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-center shadow-sm">
+                      <p className="text-sm font-semibold text-emerald-700 uppercase tracking-wide">😊 Positive</p>
+                      <p className="mt-3 text-5xl font-bold text-emerald-700">{feedbackAnalytics.positivePercent}%</p>
+                      <p className="mt-2 text-sm text-emerald-600">{feedbackAnalytics.positiveCount} reviews</p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-center shadow-sm">
+                      <p className="text-sm font-semibold text-slate-600 uppercase tracking-wide">😐 Neutral</p>
+                      <p className="mt-3 text-5xl font-bold text-slate-600">{feedbackAnalytics.neutralPercent}%</p>
+                      <p className="mt-2 text-sm text-slate-500">{feedbackAnalytics.neutralCount} reviews</p>
+                    </div>
+                    <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-center shadow-sm">
+                      <p className="text-sm font-semibold text-rose-700 uppercase tracking-wide">😞 Negative</p>
+                      <p className="mt-3 text-5xl font-bold text-rose-700">{feedbackAnalytics.negativePercent}%</p>
+                      <p className="mt-2 text-sm text-rose-600">{feedbackAnalytics.negativeCount} reviews</p>
+                    </div>
+                  </div>
+
+                  <SectionCard title="Individual Sentiment Scores" sub="AI-powered sentiment label (DistilBERT) with confidence score per review.">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left">
+                        <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          <tr><th className="p-3">Customer</th><th className="p-3">Date</th><th className="p-3">Rating</th><th className="p-3">Sentiment</th><th className="p-3">Confidence</th><th className="p-3">Review Excerpt</th></tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {feedbackItems.map(r => (
+                            <tr key={r.id} className="hover:bg-slate-50">
+                              <td className="p-3 font-medium text-slate-800">{r.customerName}</td>
+                              <td className="p-3 text-slate-500 text-xs">{r.reviewDate}</td>
+                              <td className="p-3 text-amber-600 font-semibold">{r.rating} ★</td>
+                              <td className="p-3">
+                                <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${r.sentiment === 'POSITIVE' ? 'bg-emerald-100 text-emerald-700' : r.sentiment === 'NEGATIVE' ? 'bg-rose-100 text-rose-700' : 'bg-slate-200 text-slate-600'}`}>{r.sentiment}</span>
+                              </td>
+                              <td className="p-3">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-20 bg-slate-100 rounded-full h-2">
+                                    <div className={`h-2 rounded-full ${r.sentiment === 'POSITIVE' ? 'bg-emerald-400' : r.sentiment === 'NEGATIVE' ? 'bg-rose-400' : 'bg-slate-400'}`} style={{ width: `${(r.confidenceScore * 100).toFixed(0)}%` }} />
+                                  </div>
+                                  <span className="text-xs text-slate-500">{(r.confidenceScore * 100).toFixed(0)}%</span>
+                                </div>
+                              </td>
+                              <td className="p-3 text-slate-600 text-xs max-w-xs truncate">{r.reviewText.slice(0, 80)}…</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </SectionCard>
+                </div>
+              )}
+
+              {/* ─ Categories ─ */}
+              {feedbackSubTab === 'categories' && feedbackAnalytics && (
+                <div className="space-y-6">
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <StatCard label="Total Categories" value={feedbackAnalytics.categoryDistribution.length} tone="text-slate-800" />
+                    <StatCard label="Most Discussed" value={feedbackAnalytics.topCategory} tone="text-purple-700" />
+                    <StatCard label="Least Discussed" value={feedbackAnalytics.leastCategory} tone="text-slate-500" />
+                  </div>
+
+                  <SectionCard title="Category Distribution" sub="How often each theme appears in reviews and the average rating per category.">
+                    <div className="space-y-3">
+                      {feedbackAnalytics.categoryDistribution.map(c => {
+                        const pct = feedbackAnalytics.totalReviews === 0 ? 0 : Math.round((c.count / feedbackAnalytics.totalReviews) * 100);
+                        return (
+                          <div key={c.categoryName} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="font-semibold text-slate-800">{c.categoryName}</span>
+                              <div className="flex items-center gap-4 text-sm">
+                                <span className="text-slate-600">{c.count} mentions</span>
+                                <span className="font-bold text-amber-600">{c.avgRating.toFixed(1)} ★</span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 bg-slate-200 rounded-full h-2.5">
+                                <div className="h-2.5 rounded-full bg-purple-400" style={{ width: `${pct}%` }} />
+                              </div>
+                              <span className="text-xs text-slate-500 w-10 text-right">{pct}%</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </SectionCard>
+
+                  <SectionCard title="Category-wise Ratings" sub="Average star rating per category helps identify specific areas needing improvement.">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left">
+                        <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          <tr><th className="p-3">Category</th><th className="p-3">Mentions</th><th className="p-3">Avg Rating</th><th className="p-3">Performance</th></tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {[...feedbackAnalytics.categoryDistribution].sort((a, b) => b.avgRating - a.avgRating).map(c => (
+                            <tr key={c.categoryName} className="hover:bg-slate-50">
+                              <td className="p-3 font-medium text-slate-800">{c.categoryName}</td>
+                              <td className="p-3 text-slate-600">{c.count}</td>
+                              <td className="p-3 font-bold text-amber-600">{c.avgRating.toFixed(1)} ★</td>
+                              <td className="p-3">
+                                <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${c.avgRating >= 4 ? 'bg-emerald-100 text-emerald-700' : c.avgRating >= 3 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
+                                  {c.avgRating >= 4 ? 'Excellent' : c.avgRating >= 3 ? 'Average' : 'Needs Work'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </SectionCard>
+                </div>
+              )}
+
+              {/* ─ Trends ─ */}
+              {feedbackSubTab === 'trends' && feedbackAnalytics && (
+                <div className="space-y-6">
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <StatCard label="Top Improving Category" value={feedbackAnalytics.topImprovingCategory} tone="text-emerald-700" sub="Best rating improvement vs prior period" />
+                    <StatCard label="Top Declining Category" value={feedbackAnalytics.topDecliningCategory} tone="text-rose-600" sub="Largest rating drop vs prior period" />
+                    <StatCard label="Rating Trend" value={feedbackAnalytics.ratingTrendDirection === 'up' ? '↑ Improving' : feedbackAnalytics.ratingTrendDirection === 'down' ? '↓ Declining' : '→ Stable'} tone={feedbackAnalytics.ratingTrendDirection === 'up' ? 'text-emerald-700' : feedbackAnalytics.ratingTrendDirection === 'down' ? 'text-rose-600' : 'text-slate-600'} />
+                    <StatCard label="Review Growth" value={`${feedbackAnalytics.reviewGrowthPercent >= 0 ? '+' : ''}${feedbackAnalytics.reviewGrowthPercent}%`} tone={feedbackAnalytics.reviewGrowthPercent >= 0 ? 'text-emerald-700' : 'text-rose-600'} sub="Last 30 days vs prior 30" />
+                  </div>
+
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <SectionCard title="Monthly Review Volume" sub="Review count and average rating per month.">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm text-left">
+                          <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                            <tr><th className="p-3">Month</th><th className="p-3">Reviews</th><th className="p-3">Avg Rating</th></tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {feedbackAnalytics.monthlyReviews.map(m => (
+                              <tr key={m.month} className="hover:bg-slate-50">
+                                <td className="p-3 font-semibold text-slate-800">{m.month}</td>
+                                <td className="p-3 text-sky-700 font-semibold">{m.count}</td>
+                                <td className="p-3 text-amber-600 font-semibold">{m.avgRating.toFixed(1)} ★</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </SectionCard>
+
+                    <SectionCard title="Weekly Review Growth" sub="Review volume week by week.">
+                      <div className="space-y-2">
+                        {feedbackAnalytics.weeklyReviews.map(w => {
+                          const maxW = Math.max(...feedbackAnalytics.weeklyReviews.map(x => x.count), 1);
+                          const pct = Math.round((w.count / maxW) * 100);
+                          return (
+                            <div key={w.week} className="flex items-center gap-3 text-sm">
+                              <span className="w-24 text-xs text-slate-500 shrink-0">Wk {w.week.slice(5)}</span>
+                              <div className="flex-1 bg-slate-100 rounded-full h-3">
+                                <div className="h-3 rounded-full bg-sky-400" style={{ width: `${pct}%` }} />
+                              </div>
+                              <span className="w-8 text-xs text-slate-600 text-right font-semibold">{w.count}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </SectionCard>
+
+                    <SectionCard title="Monthly Sentiment Trend" sub="Positive vs Negative review evolution over time.">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm text-left">
+                          <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                            <tr><th className="p-3">Month</th><th className="p-3 text-emerald-600">Positive</th><th className="p-3 text-slate-500">Neutral</th><th className="p-3 text-rose-600">Negative</th></tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {feedbackAnalytics.sentimentTrend.map(m => (
+                              <tr key={m.month} className="hover:bg-slate-50">
+                                <td className="p-3 font-semibold text-slate-800">{m.month}</td>
+                                <td className="p-3 text-emerald-700 font-semibold">{m.positive}</td>
+                                <td className="p-3 text-slate-500">{m.neutral}</td>
+                                <td className="p-3 text-rose-600 font-semibold">{m.negative}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </SectionCard>
+
+                    <SectionCard title="Peak Review Days" sub="Days of the week with highest review activity.">
+                      <div className="space-y-2">
+                        {feedbackAnalytics.peakReviewDays.map(d => {
+                          const maxD = Math.max(...feedbackAnalytics.peakReviewDays.map(x => x.count), 1);
+                          const pct = Math.round((d.count / maxD) * 100);
+                          return (
+                            <div key={d.dayName} className="flex items-center gap-3 text-sm">
+                              <span className="w-24 text-xs text-slate-500 shrink-0">{d.dayName.trim()}</span>
+                              <div className="flex-1 bg-slate-100 rounded-full h-3">
+                                <div className="h-3 rounded-full bg-amber-400" style={{ width: `${pct}%` }} />
+                              </div>
+                              <span className="w-8 text-xs text-slate-600 text-right font-semibold">{d.count}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </SectionCard>
+                  </div>
+                </div>
+              )}
+
+              {/* ─ Satisfaction ─ */}
+              {feedbackSubTab === 'satisfaction' && feedbackAnalytics && (
+                <div className="space-y-6">
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <StatCard label="Average Rating" value={`${feedbackAnalytics.averageRating} ★`} tone="text-amber-600" />
+                    <StatCard label="Positive %" value={`${feedbackAnalytics.positivePercent}%`} tone="text-emerald-700" sub={`${feedbackAnalytics.positiveCount} reviews`} />
+                    <StatCard label="Neutral %" value={`${feedbackAnalytics.neutralPercent}%`} tone="text-slate-600" sub={`${feedbackAnalytics.neutralCount} reviews`} />
+                    <StatCard label="Negative %" value={`${feedbackAnalytics.negativePercent}%`} tone="text-rose-600" sub={`${feedbackAnalytics.negativeCount} reviews`} />
+                  </div>
+
+                  <SectionCard title="Monthly Satisfaction Breakdown" sub="Month-by-month positive, neutral, and negative review counts.">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left">
+                        <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          <tr>
+                            <th className="p-3">Month</th>
+                            <th className="p-3">Total</th>
+                            <th className="p-3 text-emerald-600">Positive</th>
+                            <th className="p-3 text-slate-500">Neutral</th>
+                            <th className="p-3 text-rose-600">Negative</th>
+                            <th className="p-3">Satisfaction %</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {feedbackAnalytics.monthlySatisfaction.map(m => {
+                            const pct = m.total === 0 ? 0 : Math.round((m.positive / m.total) * 100);
+                            return (
+                              <tr key={m.month} className="hover:bg-slate-50">
+                                <td className="p-3 font-semibold text-slate-800">{m.month}</td>
+                                <td className="p-3 text-slate-700">{m.total}</td>
+                                <td className="p-3 text-emerald-700 font-semibold">{m.positive}</td>
+                                <td className="p-3 text-slate-500">{m.neutral}</td>
+                                <td className="p-3 text-rose-600 font-semibold">{m.negative}</td>
+                                <td className="p-3">
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-20 bg-slate-100 rounded-full h-2">
+                                      <div className="h-2 rounded-full bg-emerald-400" style={{ width: `${pct}%` }} />
+                                    </div>
+                                    <span className={`text-xs font-bold ${pct >= 70 ? 'text-emerald-700' : pct >= 50 ? 'text-amber-600' : 'text-rose-600'}`}>{pct}%</span>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </SectionCard>
+                </div>
+              )}
+
+              {/* ─ Reputation ─ */}
+              {feedbackSubTab === 'reputation' && feedbackAnalytics && (
+                <div className="space-y-6">
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="rounded-2xl border border-slate-200 bg-white/80 p-5 text-center shadow-sm">
+                      <p className="text-sm text-slate-500">Reputation Score</p>
+                      <p className={`mt-2 text-5xl font-bold ${feedbackAnalytics.reputationScore >= 70 ? 'text-emerald-700' : feedbackAnalytics.reputationScore >= 50 ? 'text-amber-600' : 'text-rose-600'}`}>{feedbackAnalytics.reputationScore}</p>
+                      <p className="mt-1 text-xs text-slate-400">out of 100</p>
+                    </div>
+                    <StatCard label="Average Rating" value={`${feedbackAnalytics.averageRating} ★`} tone="text-amber-600" sub={`Trend: ${feedbackAnalytics.ratingTrendDirection === 'up' ? '↑ Improving' : feedbackAnalytics.ratingTrendDirection === 'down' ? '↓ Declining' : '→ Stable'}`} />
+                    <StatCard label="5-Star Reviews" value={feedbackAnalytics.fiveStarCount} tone="text-emerald-700" sub={`${feedbackAnalytics.totalReviews === 0 ? 0 : Math.round((feedbackAnalytics.fiveStarCount / feedbackAnalytics.totalReviews) * 100)}% of total`} />
+                    <StatCard label="1-Star Reviews" value={feedbackAnalytics.oneStarCount} tone="text-rose-600" sub={`${feedbackAnalytics.totalReviews === 0 ? 0 : Math.round((feedbackAnalytics.oneStarCount / feedbackAnalytics.totalReviews) * 100)}% of total`} />
+                  </div>
+
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <SectionCard title="Monthly Rating Trend" sub="Average rating per month — tracks reputation over time.">
+                      <div className="space-y-2">
+                        {feedbackAnalytics.ratingTrend.map(m => (
+                          <div key={m.month} className="flex items-center gap-3 text-sm">
+                            <span className="w-20 text-xs text-slate-500 shrink-0">{m.month}</span>
+                            <div className="flex-1 bg-slate-100 rounded-full h-3">
+                              <div className={`h-3 rounded-full ${m.avgRating >= 4 ? 'bg-emerald-400' : m.avgRating >= 3 ? 'bg-amber-400' : 'bg-rose-400'}`} style={{ width: `${(m.avgRating / 5) * 100}%` }} />
+                            </div>
+                            <span className="w-14 text-xs text-right font-bold text-amber-600">{m.avgRating.toFixed(1)} ★</span>
+                          </div>
+                        ))}
+                      </div>
+                    </SectionCard>
+
+                    <SectionCard title="Review Volume by Month" sub="Total reviews per month — higher volume signals growing engagement.">
+                      <div className="space-y-2">
+                        {feedbackAnalytics.monthlyReviews.map(m => {
+                          const maxM = Math.max(...feedbackAnalytics.monthlyReviews.map(x => x.count), 1);
+                          const pct = Math.round((m.count / maxM) * 100);
+                          return (
+                            <div key={m.month} className="flex items-center gap-3 text-sm">
+                              <span className="w-20 text-xs text-slate-500 shrink-0">{m.month}</span>
+                              <div className="flex-1 bg-slate-100 rounded-full h-3">
+                                <div className="h-3 rounded-full bg-sky-400" style={{ width: `${pct}%` }} />
+                              </div>
+                              <span className="w-8 text-xs text-slate-600 text-right font-semibold">{m.count}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </SectionCard>
+
+                    <SectionCard title="Negative Review Growth" sub="Change in negative reviews vs prior period — early warning for reputation risk.">
+                      <div className="flex flex-col items-center justify-center py-6">
+                        <p className={`text-6xl font-bold ${feedbackAnalytics.negativeGrowthPercent > 10 ? 'text-rose-600' : feedbackAnalytics.negativeGrowthPercent < 0 ? 'text-emerald-700' : 'text-amber-600'}`}>
+                          {feedbackAnalytics.negativeGrowthPercent >= 0 ? '+' : ''}{feedbackAnalytics.negativeGrowthPercent}%
+                        </p>
+                        <p className="mt-2 text-sm text-slate-500">negative review growth (last 30 days vs prior 30)</p>
+                        <p className="mt-1 text-xs text-slate-400">
+                          {feedbackAnalytics.negativeGrowthPercent > 10 ? '⚠️ Increasing — investigate causes' : feedbackAnalytics.negativeGrowthPercent < 0 ? '✅ Improving — keep it up' : '→ Stable'}
+                        </p>
+                      </div>
+                    </SectionCard>
+
+                    <SectionCard title="Sentiment Trend by Month" sub="Positive vs negative review trend for reputation monitoring.">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm text-left">
+                          <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                            <tr><th className="p-3">Month</th><th className="p-3 text-emerald-600">Positive</th><th className="p-3 text-rose-600">Negative</th><th className="p-3">Ratio</th></tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {feedbackAnalytics.sentimentTrend.map(m => {
+                              const tot = m.positive + m.negative + m.neutral || 1;
+                              return (
+                                <tr key={m.month} className="hover:bg-slate-50">
+                                  <td className="p-3 font-semibold text-slate-800">{m.month}</td>
+                                  <td className="p-3 text-emerald-700 font-semibold">{m.positive}</td>
+                                  <td className="p-3 text-rose-600 font-semibold">{m.negative}</td>
+                                  <td className="p-3 text-xs text-slate-500">{Math.round((m.positive / tot) * 100)}% positive</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </SectionCard>
+                  </div>
+                </div>
+              )}
+
+              {/* ─ Weekly Summary ─ */}
+              {feedbackSubTab === 'weekly' && (
+                <div className="space-y-6">
+                  <SectionCard title="Generate Weekly Summary" sub="Computes this week's review stats — total, sentiment breakdown, top category, and peak day.">
+                    <button onClick={async () => {
+                      const res = await authFetch('/api/v1/feedback/weekly-summary/generate', { method: 'POST' });
+                      const d = await res.json().catch(() => ({}));
+                      if (res.ok) {
+                        setFeedbackMsg('Weekly summary generated!');
+                        void refreshFeedback();
+                      } else {
+                        setFeedbackMsg(d.message ?? 'Failed to generate');
+                      }
+                    }} className="rounded-xl bg-purple-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-purple-800 cursor-pointer">
+                      Generate Summary for This Week
+                    </button>
+                    <p className="mt-3 text-xs text-slate-400 bg-slate-50 rounded-xl p-3 border border-slate-200">
+                      <strong>Formula:</strong> Aggregates all reviews from the past 7 days. Identifies top category by mention count and best/worst review day. Rule-based logic — LLM integration optional for narrative generation.
+                    </p>
+                  </SectionCard>
+
+                  <SectionCard title="Weekly Summaries" sub="Generated summaries showing weekly trends in review volume and sentiment.">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left">
+                        <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          <tr>
+                            <th className="p-3">Week</th>
+                            <th className="p-3">Total</th>
+                            <th className="p-3 text-emerald-600">Positive</th>
+                            <th className="p-3 text-slate-500">Neutral</th>
+                            <th className="p-3 text-rose-600">Negative</th>
+                            <th className="p-3">Avg Rating</th>
+                            <th className="p-3">Top Category</th>
+                            <th className="p-3">Trending</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {weeklySummaries.map(w => (
+                            <tr key={w.id} className="hover:bg-slate-50">
+                              <td className="p-3 text-xs text-slate-600 font-mono">{w.weekStart} → {w.weekEnd}</td>
+                              <td className="p-3 font-bold text-slate-800">{w.totalReviews}</td>
+                              <td className="p-3 text-emerald-700 font-semibold">{w.positiveReviews}</td>
+                              <td className="p-3 text-slate-500">{w.neutralReviews}</td>
+                              <td className="p-3 text-rose-600 font-semibold">{w.negativeReviews}</td>
+                              <td className="p-3 font-bold text-amber-600">{w.averageRating.toFixed(1)} ★</td>
+                              <td className="p-3 text-purple-700 font-medium">{w.topCategory}</td>
+                              <td className="p-3 text-xs text-slate-400">{w.trendingMetric}</td>
+                            </tr>
+                          ))}
+                          {weeklySummaries.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-slate-400 italic">No summaries yet. Click Generate above.</td></tr>}
                         </tbody>
                       </table>
                     </div>

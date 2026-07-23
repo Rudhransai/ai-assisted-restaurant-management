@@ -9,6 +9,7 @@ import { closeDatabaseConnection, pool, verifyDatabaseConnection } from './confi
 import { RestaurantDbStore } from './services/restaurantDbStore';
 import { InventoryDbStore } from './services/inventoryDbStore';
 import { StaffDbStore } from './services/staffDbStore';
+import { FeedbackDbStore } from './services/feedbackDbStore';
 import { restaurantStore as memoryStore } from './services/restaurantStore';
 import { errorHandler } from './middleware/errorHandler';
 import { ReminderScheduler } from './services/reminderScheduler';
@@ -32,6 +33,7 @@ const app = express();
 const dbStore = new RestaurantDbStore(pool);
 const inventoryStore = new InventoryDbStore(pool);
 const staffStore = new StaffDbStore(pool);
+const feedbackStore = new FeedbackDbStore(pool);
 const authService = new AuthService(pool);
 const { requireAuth } = createAuthMiddleware(authService);
 let activeStore: RestaurantStoreLike = memoryStore;
@@ -504,6 +506,49 @@ app.get('/api/v1/staff/analytics', requireAuth(['manager']), async (_req, res, n
   try { res.json({ success: true, data: await staffStore.getStaffAnalytics() }); } catch (e) { next(e); }
 });
 
+// ── Customer Feedback Aggregator (Module 5) ───────────────────────────────────
+
+app.get('/api/v1/feedback', requireAuth(['manager']), async (_req, res, next) => {
+  try { res.json({ success: true, data: await feedbackStore.getFeedback() }); } catch (e) { next(e); }
+});
+
+app.post('/api/v1/feedback', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { customerName, customerId, reviewText, rating, source, reviewDate } = req.body ?? {};
+    if (!reviewText || rating === undefined) throw new AppError(400, 'reviewText and rating are required');
+    if (!customerName && !customerId) throw new AppError(400, 'customerName or customerId is required');
+    const item = await feedbackStore.addFeedback({
+      customerId, customerName, reviewText,
+      rating: Number(rating), source: source ?? 'Direct',
+      reviewDate,
+    });
+    res.status(201).json({ success: true, data: item });
+  } catch (e) { next(e); }
+});
+
+app.get('/api/v1/feedback/analytics', requireAuth(['manager']), async (_req, res, next) => {
+  try { res.json({ success: true, data: await feedbackStore.getAnalytics() }); } catch (e) { next(e); }
+});
+
+app.get('/api/v1/feedback/customers', requireAuth(['manager']), async (_req, res, next) => {
+  try { res.json({ success: true, data: await feedbackStore.getCustomers() }); } catch (e) { next(e); }
+});
+
+app.get('/api/v1/feedback/categories', requireAuth(['manager']), async (_req, res, next) => {
+  try { res.json({ success: true, data: await feedbackStore.getCategories() }); } catch (e) { next(e); }
+});
+
+app.post('/api/v1/feedback/weekly-summary/generate', requireAuth(['manager']), async (_req, res, next) => {
+  try {
+    const summary = await feedbackStore.generateWeeklySummary();
+    res.status(201).json({ success: true, data: summary });
+  } catch (e) { next(e); }
+});
+
+app.get('/api/v1/feedback/weekly-summary', requireAuth(['manager']), async (_req, res, next) => {
+  try { res.json({ success: true, data: await feedbackStore.getWeeklySummaries() }); } catch (e) { next(e); }
+});
+
 // Public reservation entry (customer can also use authenticated table-watch)
 app.post('/api/v1/public/reservation', async (req, res, next) => {
   try {
@@ -549,6 +594,7 @@ app.listen(PORT, async () => {
     await dbStore.initialize();
     await inventoryStore.initialize();
     await staffStore.initialize();
+    await feedbackStore.initialize();
     await authService.initialize();
     activeStore = dbStore;
     console.log(`Server successfully booted up on port ${PORT} using PostgreSQL`);
