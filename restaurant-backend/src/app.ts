@@ -8,6 +8,7 @@ import fs from 'fs';
 import { closeDatabaseConnection, pool, verifyDatabaseConnection } from './config/db';
 import { RestaurantDbStore } from './services/restaurantDbStore';
 import { InventoryDbStore } from './services/inventoryDbStore';
+import { StaffDbStore } from './services/staffDbStore';
 import { restaurantStore as memoryStore } from './services/restaurantStore';
 import { errorHandler } from './middleware/errorHandler';
 import { ReminderScheduler } from './services/reminderScheduler';
@@ -30,6 +31,7 @@ interface RestaurantStoreLike {
 const app = express();
 const dbStore = new RestaurantDbStore(pool);
 const inventoryStore = new InventoryDbStore(pool);
+const staffStore = new StaffDbStore(pool);
 const authService = new AuthService(pool);
 const { requireAuth } = createAuthMiddleware(authService);
 let activeStore: RestaurantStoreLike = memoryStore;
@@ -378,6 +380,130 @@ app.get('/api/v1/analytics/sales', requireAuth(['manager']), async (_req, res, n
   try { res.json({ success: true, data: await inventoryStore.getSalesAnalytics() }); } catch (e) { next(e); }
 });
 
+// ── Staff & Scheduling (Module 4) ─────────────────────────────────────────────
+
+app.get('/api/v1/staff/employees', requireAuth(['manager']), async (_req, res, next) => {
+  try { res.json({ success: true, data: await staffStore.getEmployees() }); } catch (e) { next(e); }
+});
+
+app.post('/api/v1/staff/employees', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { employeeCode, fullName, role, phoneNumber } = req.body ?? {};
+    if (!employeeCode || !fullName || !role) throw new AppError(400, 'employeeCode, fullName and role are required');
+    const emp = await staffStore.addEmployee({ employeeCode, fullName, role, phoneNumber: phoneNumber ?? '' });
+    res.status(201).json({ success: true, data: emp });
+  } catch (e) { next(e); }
+});
+
+app.patch('/api/v1/staff/employees/:id/status', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { status } = req.body ?? {};
+    await staffStore.updateEmployeeStatus(req.params.id as string, status);
+    res.json({ success: true });
+  } catch (e) { next(e); }
+});
+
+app.get('/api/v1/staff/shifts', requireAuth(['manager']), async (_req, res, next) => {
+  try { res.json({ success: true, data: await staffStore.getShifts() }); } catch (e) { next(e); }
+});
+
+app.post('/api/v1/staff/shifts', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { shiftName, startTime, endTime, breakMinutes } = req.body ?? {};
+    if (!shiftName || !startTime || !endTime) throw new AppError(400, 'shiftName, startTime and endTime are required');
+    const shift = await staffStore.addShift({ shiftName, startTime, endTime, breakMinutes: Number(breakMinutes) || 30 });
+    res.status(201).json({ success: true, data: shift });
+  } catch (e) { next(e); }
+});
+
+app.get('/api/v1/staff/schedule', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { dateFrom, dateTo } = req.query as Record<string, string>;
+    res.json({ success: true, data: await staffStore.getShiftSchedule({ dateFrom, dateTo }) });
+  } catch (e) { next(e); }
+});
+
+app.post('/api/v1/staff/schedule', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { employeeId, shiftId, shiftDate, assignedBy, remarks } = req.body ?? {};
+    if (!employeeId || !shiftId || !shiftDate) throw new AppError(400, 'employeeId, shiftId and shiftDate are required');
+    const entry = await staffStore.assignShift({ employeeId, shiftId, shiftDate, assignedBy: assignedBy ?? 'Manager', remarks: remarks ?? '' });
+    res.status(201).json({ success: true, data: entry });
+  } catch (e) { next(e); }
+});
+
+app.delete('/api/v1/staff/schedule/:id', requireAuth(['manager']), async (req, res, next) => {
+  try { await staffStore.deleteShiftAssignment(req.params.id as string); res.json({ success: true }); } catch (e) { next(e); }
+});
+
+app.get('/api/v1/staff/availability', requireAuth(['manager']), async (_req, res, next) => {
+  try { res.json({ success: true, data: await staffStore.getAvailability() }); } catch (e) { next(e); }
+});
+
+app.post('/api/v1/staff/availability', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { employeeId, availableFrom, availableTo, status, remarks } = req.body ?? {};
+    if (!employeeId || !availableFrom || !availableTo) throw new AppError(400, 'employeeId, availableFrom and availableTo are required');
+    const entry = await staffStore.addAvailability({ employeeId, availableFrom, availableTo, status: status ?? 'Available', remarks: remarks ?? '' });
+    res.status(201).json({ success: true, data: entry });
+  } catch (e) { next(e); }
+});
+
+app.get('/api/v1/staff/leave', requireAuth(['manager']), async (_req, res, next) => {
+  try { res.json({ success: true, data: await staffStore.getLeaveRequests() }); } catch (e) { next(e); }
+});
+
+app.post('/api/v1/staff/leave', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { employeeId, leaveType, startDate, endDate, reason } = req.body ?? {};
+    if (!employeeId || !leaveType || !startDate || !endDate) throw new AppError(400, 'employeeId, leaveType, startDate and endDate are required');
+    const entry = await staffStore.addLeaveRequest({ employeeId, leaveType, startDate, endDate, reason: reason ?? '' });
+    res.status(201).json({ success: true, data: entry });
+  } catch (e) { next(e); }
+});
+
+app.patch('/api/v1/staff/leave/:id', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { status, approvedBy } = req.body ?? {};
+    if (!status) throw new AppError(400, 'status is required');
+    const entry = await staffStore.updateLeaveStatus(req.params.id as string, status, approvedBy ?? 'Manager');
+    res.json({ success: true, data: entry });
+  } catch (e) { next(e); }
+});
+
+app.get('/api/v1/staff/attendance', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { dateFrom, dateTo, employeeId } = req.query as Record<string, string>;
+    res.json({ success: true, data: await staffStore.getAttendance({ dateFrom, dateTo, employeeId }) });
+  } catch (e) { next(e); }
+});
+
+app.post('/api/v1/staff/attendance', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { employeeId, attendanceDate, checkIn, checkOut, breakMinutes, attendanceStatus, markedBy, shiftId } = req.body ?? {};
+    if (!employeeId || !attendanceDate) throw new AppError(400, 'employeeId and attendanceDate are required');
+    const entry = await staffStore.markAttendance({ employeeId, attendanceDate, checkIn: checkIn ?? '', checkOut: checkOut ?? '', breakMinutes: Number(breakMinutes) || 30, attendanceStatus: attendanceStatus ?? 'Present', markedBy: markedBy ?? 'Manager', shiftId: shiftId ?? '' });
+    res.status(201).json({ success: true, data: entry });
+  } catch (e) { next(e); }
+});
+
+app.get('/api/v1/staff/payroll', requireAuth(['manager']), async (_req, res, next) => {
+  try { res.json({ success: true, data: await staffStore.getPayrollSummaries() }); } catch (e) { next(e); }
+});
+
+app.post('/api/v1/staff/payroll/generate', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { month } = req.body ?? {};
+    if (!month) throw new AppError(400, 'month is required (format: YYYY-MM)');
+    const summaries = await staffStore.generatePayroll(month);
+    res.status(201).json({ success: true, data: summaries });
+  } catch (e) { next(e); }
+});
+
+app.get('/api/v1/staff/analytics', requireAuth(['manager']), async (_req, res, next) => {
+  try { res.json({ success: true, data: await staffStore.getStaffAnalytics() }); } catch (e) { next(e); }
+});
+
 // Public reservation entry (customer can also use authenticated table-watch)
 app.post('/api/v1/public/reservation', async (req, res, next) => {
   try {
@@ -422,6 +548,7 @@ app.listen(PORT, async () => {
     await verifyDatabaseConnection();
     await dbStore.initialize();
     await inventoryStore.initialize();
+    await staffStore.initialize();
     await authService.initialize();
     activeStore = dbStore;
     console.log(`Server successfully booted up on port ${PORT} using PostgreSQL`);

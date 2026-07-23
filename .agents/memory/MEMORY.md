@@ -1,0 +1,1 @@
+- [Staff Module architecture](staff-module.md) — Module 4 fully implemented as staffDbStore.ts + routes in app.ts + Staff tab in Dashboard.tsx; all 7 tables auto-created on boot with seed data.

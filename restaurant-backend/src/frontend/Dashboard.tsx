@@ -47,7 +47,17 @@ type InventoryAnalytics = {
   stockMovement: { date: string; openingTotal: number; closingTotal: number }[];
 };
 
-type ActiveTab = 'floor' | 'reservations' | 'waitlist' | 'orders' | 'inventory' | 'analytics';
+// Staff types
+type Employee = { id: string; employeeCode: string; fullName: string; role: string; phoneNumber: string; status: 'Active' | 'Inactive' };
+type Shift = { id: string; shiftName: string; startTime: string; endTime: string; breakMinutes: number; shiftHours: number };
+type ShiftSchedule = { id: string; employeeId: string; employeeName: string; shiftId: string; shiftName: string; shiftDate: string; assignedBy: string; remarks: string };
+type EmployeeAvailability = { id: string; employeeId: string; employeeName: string; availableFrom: string; availableTo: string; status: 'Available' | 'Unavailable'; remarks: string };
+type LeaveRequest = { id: string; employeeId: string; employeeName: string; leaveType: string; startDate: string; endDate: string; reason: string; status: 'Pending' | 'Approved' | 'Rejected'; approvedBy: string };
+type AttendanceRecord = { id: string; employeeId: string; employeeName: string; attendanceDate: string; checkIn: string; checkOut: string; breakMinutes: number; workingHours: number; overtimeHours: number; lateMinutes: number; attendanceStatus: string; markedBy: string; shiftName?: string; shiftStartTime?: string };
+type PayrollSummary = { id: string; employeeId: string; employeeName: string; month: string; workingDays: number; workingHours: number; overtimeHours: number; leaveDays: number; generatedOn: string };
+type StaffAnalytics = { totalEmployees: number; activeEmployees: number; todayAttendance: { present: number; absent: number; on_leave: number }; pendingLeaveRequests: number; avgWorkingHoursThisMonth: number; topLateArrivals: { name: string; total_late: number }[] };
+
+type ActiveTab = 'floor' | 'reservations' | 'waitlist' | 'orders' | 'inventory' | 'analytics' | 'staff';
 
 const tabLabels: Record<ActiveTab, string> = {
   floor: '🏠 Floor Plan',
@@ -56,6 +66,7 @@ const tabLabels: Record<ActiveTab, string> = {
   orders: '🧾 Orders',
   inventory: '📦 Inventory',
   analytics: '📊 Analytics',
+  staff: '👥 Staff',
 };
 
 const MEAL_PERIOD_COLORS: Record<string, string> = {
@@ -147,6 +158,28 @@ export function Dashboard() {
   const [salesAnalytics, setSalesAnalytics] = useState<SalesAnalytics | null>(null);
   const [analyticsSubTab, setAnalyticsSubTab] = useState<'sales' | 'menu' | 'reservations'>('sales');
 
+  // Staff state
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [shifts, setShifts] = useState<Shift[]>([]);
+  const [shiftSchedule, setShiftSchedule] = useState<ShiftSchedule[]>([]);
+  const [availability, setAvailability] = useState<EmployeeAvailability[]>([]);
+  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
+  const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
+  const [payroll, setPayroll] = useState<PayrollSummary[]>([]);
+  const [staffAnalytics, setStaffAnalytics] = useState<StaffAnalytics | null>(null);
+  const [staffSubTab, setStaffSubTab] = useState<'overview' | 'roster' | 'availability' | 'leave' | 'attendance' | 'payroll'>('overview');
+  const [staffMsg, setStaffMsg] = useState<string | null>(null);
+  // Staff forms
+  const [empForm, setEmpForm] = useState({ employeeCode: '', fullName: '', role: 'Waitstaff', phoneNumber: '' });
+  const [showEmpForm, setShowEmpForm] = useState(false);
+  const [shiftForm, setShiftForm] = useState({ shiftName: '', startTime: '09:00', endTime: '17:00', breakMinutes: '60' });
+  const [showShiftForm, setShowShiftForm] = useState(false);
+  const [scheduleForm, setScheduleForm] = useState({ employeeId: '', shiftId: '', shiftDate: today, remarks: '' });
+  const [availForm, setAvailForm] = useState({ employeeId: '', availableFrom: today, availableTo: today, status: 'Available' as 'Available' | 'Unavailable', remarks: '' });
+  const [leaveForm, setLeaveForm] = useState({ employeeId: '', leaveType: 'Sick Leave', startDate: today, endDate: today, reason: '' });
+  const [attForm, setAttForm] = useState({ employeeId: '', attendanceDate: today, checkIn: '09:00', checkOut: '17:00', breakMinutes: '60', attendanceStatus: 'Present' as 'Present' | 'Absent' | 'Leave' | 'Half-Day', shiftId: '' });
+  const [payrollMonth, setPayrollMonth] = useState(today.slice(0, 7));
+
   // ── Data fetching ────────────────────────────────────────────────────────
 
   const refreshDashboard = async () => {
@@ -207,11 +240,38 @@ export function Dashboard() {
     if (res.ok) setSalesAnalytics(d.data ?? null);
   };
 
+  const refreshStaff = async () => {
+    const parse = async (r: Response) => { const d = await r.json().catch(() => ({})); return r.ok ? (d.data ?? d) : null; };
+    const [empRes, shiftRes, schedRes, availRes, leaveRes, attRes, payRes, anaRes] = await Promise.all([
+      authFetch('/api/v1/staff/employees'),
+      authFetch('/api/v1/staff/shifts'),
+      authFetch('/api/v1/staff/schedule'),
+      authFetch('/api/v1/staff/availability'),
+      authFetch('/api/v1/staff/leave'),
+      authFetch('/api/v1/staff/attendance'),
+      authFetch('/api/v1/staff/payroll'),
+      authFetch('/api/v1/staff/analytics'),
+    ]);
+    const [emp, sh, sc, av, lv, at, py, an] = await Promise.all([
+      parse(empRes), parse(shiftRes), parse(schedRes), parse(availRes),
+      parse(leaveRes), parse(attRes), parse(payRes), parse(anaRes),
+    ]);
+    if (emp) setEmployees(emp);
+    if (sh) setShifts(sh);
+    if (sc) setShiftSchedule(sc);
+    if (av) setAvailability(av);
+    if (lv) setLeaveRequests(lv);
+    if (at) setAttendance(at);
+    if (py) setPayroll(py);
+    if (an) setStaffAnalytics(an);
+  };
+
   useEffect(() => { void refreshDashboard(); }, []);
   useEffect(() => {
     if (activeTab === 'orders') void refreshOrders();
     if (activeTab === 'inventory') void refreshInventory();
     if (activeTab === 'analytics') { void refreshOrders(); void refreshSalesAnalytics(); }
+    if (activeTab === 'staff') void refreshStaff();
   }, [activeTab]);
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -325,6 +385,46 @@ export function Dashboard() {
     if (!ing) return;
     const ok = await post('/api/v1/inventory/stock-entries', { ingredientId: stockEntryForm.ingredientId, ingredientName: ing.name, entryType: stockEntryForm.entryType, quantity: Number(stockEntryForm.quantity), date: stockEntryForm.date, notes: stockEntryForm.notes });
     if (ok) { setStockEntryForm({ ingredientId: '', entryType: 'opening', quantity: '', date: today, notes: '' }); setInvMsg(`✅ ${stockEntryForm.entryType === 'opening' ? 'Opening' : 'Closing'} stock recorded`); await refreshInventory(); }
+  };
+
+  // Staff handlers
+  const handleAddEmployee = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const ok = await post('/api/v1/staff/employees', empForm);
+    if (ok) { setEmpForm({ employeeCode: '', fullName: '', role: 'Waitstaff', phoneNumber: '' }); setShowEmpForm(false); setStaffMsg('✅ Employee added'); await refreshStaff(); }
+  };
+  const handleAddShift = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const ok = await post('/api/v1/staff/shifts', { ...shiftForm, breakMinutes: Number(shiftForm.breakMinutes) });
+    if (ok) { setShiftForm({ shiftName: '', startTime: '09:00', endTime: '17:00', breakMinutes: '60' }); setShowShiftForm(false); setStaffMsg('✅ Shift created'); await refreshStaff(); }
+  };
+  const handleAssignShift = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const ok = await post('/api/v1/staff/schedule', scheduleForm);
+    if (ok) { setScheduleForm({ employeeId: '', shiftId: '', shiftDate: today, remarks: '' }); setStaffMsg('✅ Shift assigned'); await refreshStaff(); }
+  };
+  const handleAddAvailability = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const ok = await post('/api/v1/staff/availability', availForm);
+    if (ok) { setAvailForm({ employeeId: '', availableFrom: today, availableTo: today, status: 'Available', remarks: '' }); setStaffMsg('✅ Availability recorded'); await refreshStaff(); }
+  };
+  const handleAddLeave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const ok = await post('/api/v1/staff/leave', leaveForm);
+    if (ok) { setLeaveForm({ employeeId: '', leaveType: 'Sick Leave', startDate: today, endDate: today, reason: '' }); setStaffMsg('✅ Leave request submitted'); await refreshStaff(); }
+  };
+  const handleLeaveAction = async (id: string, status: 'Approved' | 'Rejected') => {
+    await authFetch(`/api/v1/staff/leave/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, approvedBy: 'Manager' }) });
+    setStaffMsg(`✅ Leave ${status.toLowerCase()}`); await refreshStaff();
+  };
+  const handleMarkAttendance = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const ok = await post('/api/v1/staff/attendance', { ...attForm, breakMinutes: Number(attForm.breakMinutes) });
+    if (ok) { setAttForm({ employeeId: '', attendanceDate: today, checkIn: '09:00', checkOut: '17:00', breakMinutes: '60', attendanceStatus: 'Present', shiftId: '' }); setStaffMsg('✅ Attendance marked'); await refreshStaff(); }
+  };
+  const handleGeneratePayroll = async () => {
+    const ok = await post('/api/v1/staff/payroll/generate', { month: payrollMonth });
+    if (ok) { setStaffMsg(`✅ Payroll generated for ${payrollMonth}`); await refreshStaff(); }
   };
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -1224,6 +1324,374 @@ export function Dashboard() {
                   ) : <p className="text-sm text-slate-400 italic p-6 text-center">Loading reservation analytics…</p>}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ══ STAFF & SCHEDULING (MODULE 4) ═══════════════════════════════ */}
+          {activeTab === 'staff' && (
+            <div className="space-y-6">
+              {staffMsg && (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 flex items-center justify-between">
+                  {staffMsg}
+                  <button onClick={() => setStaffMsg(null)} className="ml-4 text-emerald-500 hover:text-emerald-700 cursor-pointer">✕</button>
+                </div>
+              )}
+
+              {/* Staff sub-tabs */}
+              <nav className="flex flex-wrap gap-2">
+                {(['overview', 'roster', 'availability', 'leave', 'attendance', 'payroll'] as const).map(t => (
+                  <button key={t} onClick={() => setStaffSubTab(t)}
+                    className={`rounded-full px-4 py-2 text-sm font-semibold capitalize cursor-pointer transition ${staffSubTab === t ? 'bg-slate-900 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                    {t === 'overview' ? '📊 Overview' : t === 'roster' ? '📋 Shift Roster' : t === 'availability' ? '🗓️ Availability' : t === 'leave' ? '🏖️ Leave' : t === 'attendance' ? '✅ Attendance' : '💰 Payroll'}
+                  </button>
+                ))}
+                <button onClick={() => void refreshStaff()} className="ml-auto rounded-full border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 cursor-pointer">↻ Refresh</button>
+              </nav>
+
+              {/* ─ Overview ─ */}
+              {staffSubTab === 'overview' && (
+                <div className="space-y-6">
+                  {staffAnalytics && (
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      <StatCard label="Total Employees" value={staffAnalytics.totalEmployees} tone="text-slate-800" />
+                      <StatCard label="Active Employees" value={staffAnalytics.activeEmployees} tone="text-emerald-700" />
+                      <StatCard label="Today — Present" value={staffAnalytics.todayAttendance.present} tone="text-sky-700" sub={`Absent: ${staffAnalytics.todayAttendance.absent} · On Leave: ${staffAnalytics.todayAttendance.on_leave}`} />
+                      <StatCard label="Pending Leave Requests" value={staffAnalytics.pendingLeaveRequests} tone="text-amber-700" />
+                      <StatCard label="Avg Working Hours (this month)" value={`${staffAnalytics.avgWorkingHoursThisMonth} h`} tone="text-purple-700" />
+                    </div>
+                  )}
+
+                  {staffAnalytics && staffAnalytics.topLateArrivals.length > 0 && (
+                    <SectionCard title="Late Arrival Summary" sub="Employees with most accumulated late minutes this month.">
+                      <div className="space-y-3">
+                        {staffAnalytics.topLateArrivals.map((e, idx) => (
+                          <div key={e.name} className="flex items-center gap-3 rounded-xl border border-amber-100 bg-amber-50 p-3">
+                            <span className="w-7 h-7 flex items-center justify-center rounded-full bg-amber-200 text-amber-900 text-sm font-bold">#{idx + 1}</span>
+                            <span className="flex-1 font-semibold text-slate-800">{e.name}</span>
+                            <span className="text-sm font-bold text-amber-700">{e.total_late} min late total</span>
+                          </div>
+                        ))}
+                      </div>
+                    </SectionCard>
+                  )}
+
+                  {/* Employee Directory */}
+                  <SectionCard title="Employee Directory" sub="All staff members with roles and status." action={
+                    <button onClick={() => setShowEmpForm(p => !p)} className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 cursor-pointer">{showEmpForm ? 'Hide' : '+ Add Employee'}</button>
+                  }>
+                    {showEmpForm && (
+                      <form onSubmit={handleAddEmployee} className="mb-5 grid gap-3 md:grid-cols-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <input required value={empForm.employeeCode} onChange={e => setEmpForm({ ...empForm, employeeCode: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Employee Code (e.g. E006)" />
+                        <input required value={empForm.fullName} onChange={e => setEmpForm({ ...empForm, fullName: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Full Name" />
+                        <select value={empForm.role} onChange={e => setEmpForm({ ...empForm, role: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5">
+                          {['Chef', 'Waitstaff', 'Cashier', 'Hostess', 'Kitchen Assistant', 'Bartender', 'Manager', 'Cleaner'].map(r => <option key={r}>{r}</option>)}
+                        </select>
+                        <input value={empForm.phoneNumber} onChange={e => setEmpForm({ ...empForm, phoneNumber: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Phone Number" />
+                        <button type="submit" className="md:col-span-4 rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 cursor-pointer">Add Employee</button>
+                      </form>
+                    )}
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      {employees.map(emp => (
+                        <div key={emp.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <p className="font-bold text-slate-800">{emp.fullName}</p>
+                              <p className="text-xs text-slate-500 font-mono mt-0.5">{emp.employeeCode}</p>
+                            </div>
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${emp.status === 'Active' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>{emp.status}</span>
+                          </div>
+                          <p className="mt-2 text-sm text-slate-600">{emp.role}</p>
+                          {emp.phoneNumber && <p className="text-xs text-slate-400 mt-1">📞 {emp.phoneNumber}</p>}
+                          <button onClick={async () => { await authFetch(`/api/v1/staff/employees/${emp.id}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: emp.status === 'Active' ? 'Inactive' : 'Active' }) }); void refreshStaff(); }}
+                            className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer">
+                            {emp.status === 'Active' ? 'Mark Inactive' : 'Mark Active'}
+                          </button>
+                        </div>
+                      ))}
+                      {employees.length === 0 && <p className="text-sm text-slate-400 italic col-span-3">No employees added yet.</p>}
+                    </div>
+                  </SectionCard>
+                </div>
+              )}
+
+              {/* ─ Shift Roster ─ */}
+              {staffSubTab === 'roster' && (
+                <div className="space-y-6">
+                  {/* Define Shifts */}
+                  <SectionCard title="Shift Definitions" sub="Morning, Evening, Night — define working hour templates." action={
+                    <button onClick={() => setShowShiftForm(p => !p)} className="rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 cursor-pointer">{showShiftForm ? 'Hide' : '+ New Shift'}</button>
+                  }>
+                    {showShiftForm && (
+                      <form onSubmit={handleAddShift} className="mb-5 grid gap-3 md:grid-cols-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <input required value={shiftForm.shiftName} onChange={e => setShiftForm({ ...shiftForm, shiftName: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Shift name (e.g. Morning)" />
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs text-slate-500 whitespace-nowrap">Start</label>
+                          <input type="time" value={shiftForm.startTime} onChange={e => setShiftForm({ ...shiftForm, startTime: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5 w-full" />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs text-slate-500 whitespace-nowrap">End</label>
+                          <input type="time" value={shiftForm.endTime} onChange={e => setShiftForm({ ...shiftForm, endTime: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5 w-full" />
+                        </div>
+                        <input type="number" min="0" value={shiftForm.breakMinutes} onChange={e => setShiftForm({ ...shiftForm, breakMinutes: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Break (minutes)" />
+                        <button type="submit" className="md:col-span-4 rounded-xl bg-sky-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-800 cursor-pointer">Create Shift</button>
+                      </form>
+                    )}
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      {shifts.map(s => (
+                        <div key={s.id} className="rounded-2xl border border-sky-100 bg-sky-50 p-4">
+                          <p className="font-bold text-sky-800">{s.shiftName}</p>
+                          <p className="text-sm text-sky-600 mt-1">{s.startTime} → {s.endTime}</p>
+                          <p className="text-xs text-sky-500 mt-1">Break: {s.breakMinutes} min · Net: {s.shiftHours.toFixed(1)} h</p>
+                        </div>
+                      ))}
+                      {shifts.length === 0 && <p className="text-sm text-slate-400 italic col-span-4">No shifts defined yet.</p>}
+                    </div>
+                  </SectionCard>
+
+                  {/* Assign Shifts */}
+                  <SectionCard title="Assign Shift to Employee" sub="Build the daily shift roster by assigning employees to shifts.">
+                    <form onSubmit={handleAssignShift} className="grid gap-3 md:grid-cols-4 lg:grid-cols-5">
+                      <select required value={scheduleForm.employeeId} onChange={e => setScheduleForm({ ...scheduleForm, employeeId: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5">
+                        <option value="">Select Employee</option>
+                        {employees.filter(emp => emp.status === 'Active').map(emp => <option key={emp.id} value={emp.id}>{emp.fullName} ({emp.role})</option>)}
+                      </select>
+                      <select required value={scheduleForm.shiftId} onChange={e => setScheduleForm({ ...scheduleForm, shiftId: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5">
+                        <option value="">Select Shift</option>
+                        {shifts.map(s => <option key={s.id} value={s.id}>{s.shiftName} ({s.startTime}–{s.endTime})</option>)}
+                      </select>
+                      <input type="date" value={scheduleForm.shiftDate} onChange={e => setScheduleForm({ ...scheduleForm, shiftDate: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" />
+                      <input value={scheduleForm.remarks} onChange={e => setScheduleForm({ ...scheduleForm, remarks: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Remarks (optional)" />
+                      <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 cursor-pointer">Assign Shift</button>
+                    </form>
+                  </SectionCard>
+
+                  {/* Roster Table */}
+                  <SectionCard title="Shift Schedule" sub="All assigned shifts by date.">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left">
+                        <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          <tr><th className="p-3">Date</th><th className="p-3">Employee</th><th className="p-3">Shift</th><th className="p-3">Assigned By</th><th className="p-3">Remarks</th><th className="p-3"></th></tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {shiftSchedule.map(ss => (
+                            <tr key={ss.id} className="hover:bg-slate-50">
+                              <td className="p-3 font-medium text-slate-700">{ss.shiftDate}</td>
+                              <td className="p-3 font-semibold text-slate-800">{ss.employeeName}</td>
+                              <td className="p-3"><span className="rounded-full bg-sky-100 text-sky-800 px-2 py-0.5 text-xs font-semibold">{ss.shiftName}</span></td>
+                              <td className="p-3 text-slate-500">{ss.assignedBy}</td>
+                              <td className="p-3 text-slate-400 text-xs">{ss.remarks || '—'}</td>
+                              <td className="p-3"><button onClick={async () => { await authFetch(`/api/v1/staff/schedule/${ss.id}`, { method: 'DELETE' }); void refreshStaff(); }} className="text-rose-500 hover:text-rose-700 text-xs font-semibold cursor-pointer">Remove</button></td>
+                            </tr>
+                          ))}
+                          {shiftSchedule.length === 0 && <tr><td colSpan={6} className="p-6 text-center text-slate-400 italic">No shifts scheduled yet.</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                  </SectionCard>
+                </div>
+              )}
+
+              {/* ─ Availability ─ */}
+              {staffSubTab === 'availability' && (
+                <div className="space-y-6">
+                  <SectionCard title="Record Staff Availability" sub="Log when employees are available or unavailable before scheduling.">
+                    <form onSubmit={handleAddAvailability} className="grid gap-3 md:grid-cols-5">
+                      <select required value={availForm.employeeId} onChange={e => setAvailForm({ ...availForm, employeeId: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5">
+                        <option value="">Select Employee</option>
+                        {employees.map(emp => <option key={emp.id} value={emp.id}>{emp.fullName}</option>)}
+                      </select>
+                      <input type="date" value={availForm.availableFrom} onChange={e => setAvailForm({ ...availForm, availableFrom: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" />
+                      <input type="date" value={availForm.availableTo} onChange={e => setAvailForm({ ...availForm, availableTo: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" />
+                      <select value={availForm.status} onChange={e => setAvailForm({ ...availForm, status: e.target.value as 'Available' | 'Unavailable' })} className="rounded-xl border border-slate-300 px-3 py-2.5">
+                        <option value="Available">Available</option>
+                        <option value="Unavailable">Unavailable</option>
+                      </select>
+                      <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 cursor-pointer">Record</button>
+                    </form>
+                    <input value={availForm.remarks} onChange={e => setAvailForm({ ...availForm, remarks: e.target.value })} className="mt-3 w-full rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Remarks (e.g. Available Mon-Fri only)" />
+                  </SectionCard>
+
+                  <SectionCard title="Availability Records" sub="Current availability and unavailability periods for all staff.">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left">
+                        <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          <tr><th className="p-3">Employee</th><th className="p-3">From</th><th className="p-3">To</th><th className="p-3">Status</th><th className="p-3">Remarks</th></tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {availability.map(av => (
+                            <tr key={av.id} className="hover:bg-slate-50">
+                              <td className="p-3 font-semibold text-slate-800">{av.employeeName}</td>
+                              <td className="p-3 text-slate-700">{av.availableFrom}</td>
+                              <td className="p-3 text-slate-700">{av.availableTo}</td>
+                              <td className="p-3"><span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${av.status === 'Available' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>{av.status}</span></td>
+                              <td className="p-3 text-slate-400 text-xs">{av.remarks || '—'}</td>
+                            </tr>
+                          ))}
+                          {availability.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-slate-400 italic">No availability records yet.</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                  </SectionCard>
+                </div>
+              )}
+
+              {/* ─ Leave ─ */}
+              {staffSubTab === 'leave' && (
+                <div className="space-y-6">
+                  <SectionCard title="Submit Leave Request" sub="Log sick leave, casual leave, or planned absence.">
+                    <form onSubmit={handleAddLeave} className="grid gap-3 md:grid-cols-3 lg:grid-cols-5">
+                      <select required value={leaveForm.employeeId} onChange={e => setLeaveForm({ ...leaveForm, employeeId: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5">
+                        <option value="">Select Employee</option>
+                        {employees.map(emp => <option key={emp.id} value={emp.id}>{emp.fullName}</option>)}
+                      </select>
+                      <select value={leaveForm.leaveType} onChange={e => setLeaveForm({ ...leaveForm, leaveType: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5">
+                        {['Sick Leave', 'Casual Leave', 'Annual Leave', 'Maternity Leave', 'Unpaid Leave', 'Other'].map(t => <option key={t}>{t}</option>)}
+                      </select>
+                      <input type="date" value={leaveForm.startDate} onChange={e => setLeaveForm({ ...leaveForm, startDate: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" />
+                      <input type="date" value={leaveForm.endDate} onChange={e => setLeaveForm({ ...leaveForm, endDate: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" />
+                      <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 cursor-pointer">Submit Request</button>
+                    </form>
+                    <input value={leaveForm.reason} onChange={e => setLeaveForm({ ...leaveForm, reason: e.target.value })} className="mt-3 w-full rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Reason (e.g. Fever, Personal work)" />
+                  </SectionCard>
+
+                  <SectionCard title="Leave Requests" sub="Pending and historical leave requests. Approve or reject here.">
+                    <div className="space-y-3">
+                      {leaveRequests.map(lr => (
+                        <div key={lr.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="font-semibold text-slate-800">{lr.employeeName}</p>
+                              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${lr.status === 'Approved' ? 'bg-emerald-100 text-emerald-700' : lr.status === 'Rejected' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>{lr.status}</span>
+                            </div>
+                            <p className="text-sm text-slate-600 mt-1">{lr.leaveType} · {lr.startDate} to {lr.endDate}</p>
+                            {lr.reason && <p className="text-xs text-slate-400 mt-0.5">{lr.reason}</p>}
+                            {lr.approvedBy && <p className="text-xs text-slate-400">By: {lr.approvedBy}</p>}
+                          </div>
+                          {lr.status === 'Pending' && (
+                            <div className="flex gap-2 shrink-0">
+                              <button onClick={() => handleLeaveAction(lr.id, 'Approved')} className="rounded-xl bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800 cursor-pointer">Approve</button>
+                              <button onClick={() => handleLeaveAction(lr.id, 'Rejected')} className="rounded-xl bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 cursor-pointer">Reject</button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {leaveRequests.length === 0 && <p className="text-sm text-slate-400 italic text-center p-6">No leave requests yet.</p>}
+                    </div>
+                  </SectionCard>
+                </div>
+              )}
+
+              {/* ─ Attendance ─ */}
+              {staffSubTab === 'attendance' && (
+                <div className="space-y-6">
+                  <SectionCard title="Mark Attendance" sub="Record employee check-in, check-out and break time. Working hours and overtime are calculated automatically.">
+                    <form onSubmit={handleMarkAttendance} className="grid gap-3 md:grid-cols-3 lg:grid-cols-4">
+                      <select required value={attForm.employeeId} onChange={e => setAttForm({ ...attForm, employeeId: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5">
+                        <option value="">Select Employee</option>
+                        {employees.filter(emp => emp.status === 'Active').map(emp => <option key={emp.id} value={emp.id}>{emp.fullName}</option>)}
+                      </select>
+                      <input type="date" value={attForm.attendanceDate} onChange={e => setAttForm({ ...attForm, attendanceDate: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" />
+                      <select value={attForm.attendanceStatus} onChange={e => setAttForm({ ...attForm, attendanceStatus: e.target.value as typeof attForm.attendanceStatus })} className="rounded-xl border border-slate-300 px-3 py-2.5">
+                        <option value="Present">Present</option>
+                        <option value="Absent">Absent</option>
+                        <option value="Leave">On Leave</option>
+                        <option value="Half-Day">Half-Day</option>
+                      </select>
+                      <select value={attForm.shiftId} onChange={e => setAttForm({ ...attForm, shiftId: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5">
+                        <option value="">Select Shift (optional)</option>
+                        {shifts.map(s => <option key={s.id} value={s.id}>{s.shiftName} ({s.startTime}–{s.endTime})</option>)}
+                      </select>
+                      {(attForm.attendanceStatus === 'Present' || attForm.attendanceStatus === 'Half-Day') && (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <label className="text-xs text-slate-500 whitespace-nowrap">Check-In</label>
+                            <input type="time" value={attForm.checkIn} onChange={e => setAttForm({ ...attForm, checkIn: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5 w-full" />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <label className="text-xs text-slate-500 whitespace-nowrap">Check-Out</label>
+                            <input type="time" value={attForm.checkOut} onChange={e => setAttForm({ ...attForm, checkOut: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5 w-full" />
+                          </div>
+                          <input type="number" min="0" value={attForm.breakMinutes} onChange={e => setAttForm({ ...attForm, breakMinutes: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Break (minutes)" />
+                        </>
+                      )}
+                      <button type="submit" className="lg:col-span-4 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 cursor-pointer">Mark Attendance</button>
+                    </form>
+                    <p className="mt-3 text-xs text-slate-400 bg-slate-50 rounded-xl p-3 border border-slate-200">
+                      <strong>Auto-calculated:</strong> Working Hours = (Check-Out − Check-In) − Break. Overtime = Working Hours − Shift Hours. Late Minutes = Check-In − Shift Start Time.
+                    </p>
+                  </SectionCard>
+
+                  <SectionCard title="Attendance Log" sub="Daily attendance records with working hours, overtime and late arrival tracking.">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left">
+                        <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          <tr>
+                            <th className="p-3">Date</th><th className="p-3">Employee</th><th className="p-3">Shift</th>
+                            <th className="p-3">Check-In</th><th className="p-3">Check-Out</th>
+                            <th className="p-3">Working Hrs</th><th className="p-3">Overtime</th><th className="p-3">Late (min)</th><th className="p-3">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {attendance.map(a => (
+                            <tr key={a.id} className="hover:bg-slate-50">
+                              <td className="p-3 text-slate-700">{a.attendanceDate}</td>
+                              <td className="p-3 font-semibold text-slate-800">{a.employeeName}</td>
+                              <td className="p-3 text-slate-500 text-xs">{a.shiftName ?? '—'}</td>
+                              <td className="p-3">{a.checkIn || '—'}</td>
+                              <td className="p-3">{a.checkOut || '—'}</td>
+                              <td className="p-3 font-semibold text-sky-700">{a.workingHours > 0 ? `${a.workingHours.toFixed(2)} h` : '—'}</td>
+                              <td className="p-3">{a.overtimeHours > 0 ? <span className="font-semibold text-purple-700">{a.overtimeHours.toFixed(2)} h</span> : '—'}</td>
+                              <td className="p-3">{a.lateMinutes > 0 ? <span className="font-semibold text-amber-700">{a.lateMinutes} min</span> : <span className="text-emerald-600">On time</span>}</td>
+                              <td className="p-3"><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${a.attendanceStatus === 'Present' ? 'bg-emerald-100 text-emerald-700' : a.attendanceStatus === 'Absent' ? 'bg-rose-100 text-rose-700' : a.attendanceStatus === 'Leave' ? 'bg-amber-100 text-amber-700' : 'bg-sky-100 text-sky-700'}`}>{a.attendanceStatus}</span></td>
+                            </tr>
+                          ))}
+                          {attendance.length === 0 && <tr><td colSpan={9} className="p-6 text-center text-slate-400 italic">No attendance records yet.</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                  </SectionCard>
+                </div>
+              )}
+
+              {/* ─ Payroll ─ */}
+              {staffSubTab === 'payroll' && (
+                <div className="space-y-6">
+                  <SectionCard title="Generate Payroll Summary" sub="Computes working days, hours, overtime and leave days from attendance data for a given month.">
+                    <div className="flex items-center gap-3">
+                      <input type="month" value={payrollMonth} onChange={e => setPayrollMonth(e.target.value)} className="rounded-xl border border-slate-300 px-3 py-2.5" />
+                      <button onClick={handleGeneratePayroll} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 cursor-pointer">Generate Payroll for {payrollMonth}</button>
+                    </div>
+                    <p className="mt-3 text-xs text-slate-400 bg-slate-50 rounded-xl p-3 border border-slate-200">
+                      <strong>Formula:</strong> Working Days = attendance days marked Present or Half-Day. Working Hours = sum of all logged hours. Overtime = hours beyond scheduled shift. Leave Days = approved leave in this month.
+                    </p>
+                  </SectionCard>
+
+                  <SectionCard title="Payroll Summary" sub="Generated payroll data by employee and month.">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left">
+                        <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          <tr><th className="p-3">Month</th><th className="p-3">Employee</th><th className="p-3">Working Days</th><th className="p-3">Working Hours</th><th className="p-3">Overtime Hours</th><th className="p-3">Leave Days</th><th className="p-3">Generated On</th></tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {payroll.map(p => (
+                            <tr key={p.id} className="hover:bg-slate-50">
+                              <td className="p-3 font-semibold text-slate-800">{p.month}</td>
+                              <td className="p-3 text-slate-700">{p.employeeName}</td>
+                              <td className="p-3 text-sky-700 font-semibold">{p.workingDays}</td>
+                              <td className="p-3 text-slate-700">{p.workingHours.toFixed(2)} h</td>
+                              <td className="p-3">{p.overtimeHours > 0 ? <span className="font-semibold text-purple-700">{p.overtimeHours.toFixed(2)} h</span> : '—'}</td>
+                              <td className="p-3">{p.leaveDays > 0 ? <span className="text-amber-700 font-semibold">{p.leaveDays}</span> : '—'}</td>
+                              <td className="p-3 text-slate-400 text-xs">{p.generatedOn}</td>
+                            </tr>
+                          ))}
+                          {payroll.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-slate-400 italic">No payroll generated yet. Select a month and click Generate.</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                  </SectionCard>
+                </div>
+              )}
+
             </div>
           )}
 
