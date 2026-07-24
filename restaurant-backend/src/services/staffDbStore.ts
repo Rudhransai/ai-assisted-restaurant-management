@@ -563,7 +563,9 @@ export class StaffDbStore {
 
   async generatePayroll(month: string): Promise<PayrollSummary[]> {
     // month format: 'YYYY-MM'
-    const [year, mon] = month.split('-').map(Number);
+    const parts = month.split('-').map(Number);
+    const year = parts[0] ?? new Date().getFullYear();
+    const mon  = parts[1] ?? (new Date().getMonth() + 1);
     const dateFrom = `${month}-01`;
     // Last day of month
     const lastDay = new Date(year, mon, 0).getDate();
@@ -571,7 +573,7 @@ export class StaffDbStore {
 
     const employees = await this.getEmployees();
     const results: PayrollSummary[] = [];
-    const generatedOn = new Date().toISOString().split('T')[0];
+    const generatedOn = new Date().toISOString().split('T')[0] ?? '';
 
     for (const emp of employees) {
       // Attendance for this month

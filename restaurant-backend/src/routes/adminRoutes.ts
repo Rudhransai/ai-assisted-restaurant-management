@@ -26,9 +26,9 @@ adminRoutes.get('/users', requireAuth(['manager']), async (_req, res, next) => {
 adminRoutes.get('/db/:tableName', requireAuth(['manager']), async (req, res, next) => {
   try {
     const allowedTables = ['users', 'tables', 'reservations', 'waitlist', 'notifications', 'table_watch', 'dishes', 'orders', 'order_items'];
-    const tableName = req.params.tableName;
+    const tableName = typeof req.params['tableName'] === 'string' ? req.params['tableName'] : '';
 
-    if (!allowedTables.includes(tableName)) {
+    if (!tableName || !allowedTables.includes(tableName)) {
       throw new AppError(400, `Invalid table name. Allowed: ${allowedTables.join(', ')}`);
     }
 

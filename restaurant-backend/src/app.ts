@@ -421,8 +421,11 @@ app.post('/api/v1/staff/shifts', requireAuth(['manager']), async (req, res, next
 
 app.get('/api/v1/staff/schedule', requireAuth(['manager']), async (req, res, next) => {
   try {
-    const { dateFrom, dateTo } = req.query as Record<string, string>;
-    res.json({ success: true, data: await staffStore.getShiftSchedule({ dateFrom, dateTo }) });
+    const q = req.query as Record<string, string | undefined>;
+    const scheduleArgs: { dateFrom?: string; dateTo?: string } = {};
+    if (q['dateFrom'] !== undefined) scheduleArgs.dateFrom = q['dateFrom'];
+    if (q['dateTo'] !== undefined) scheduleArgs.dateTo = q['dateTo'];
+    res.json({ success: true, data: await staffStore.getShiftSchedule(scheduleArgs) });
   } catch (e) { next(e); }
 });
 
@@ -476,8 +479,12 @@ app.patch('/api/v1/staff/leave/:id', requireAuth(['manager']), async (req, res, 
 
 app.get('/api/v1/staff/attendance', requireAuth(['manager']), async (req, res, next) => {
   try {
-    const { dateFrom, dateTo, employeeId } = req.query as Record<string, string>;
-    res.json({ success: true, data: await staffStore.getAttendance({ dateFrom, dateTo, employeeId }) });
+    const q = req.query as Record<string, string | undefined>;
+    const attArgs: { dateFrom?: string; dateTo?: string; employeeId?: string } = {};
+    if (q['dateFrom'] !== undefined) attArgs.dateFrom = q['dateFrom'];
+    if (q['dateTo'] !== undefined) attArgs.dateTo = q['dateTo'];
+    if (q['employeeId'] !== undefined) attArgs.employeeId = q['employeeId'];
+    res.json({ success: true, data: await staffStore.getAttendance(attArgs) });
   } catch (e) { next(e); }
 });
 

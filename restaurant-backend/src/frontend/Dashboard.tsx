@@ -172,7 +172,7 @@ export function Dashboard() {
   const [invSubTab, setInvSubTab] = useState<'overview' | 'stock' | 'purchases' | 'wastage' | 'vendors'>('overview');
 
   // Forms for inventory
-  const today = new Date().toISOString().split('T')[0];
+  const today = new Date().toISOString().split('T')[0] ?? '';
   const [ingForm, setIngForm] = useState({ name: '', unit: 'kg', currentStock: '0', minimumStock: '0', costPerUnit: '0', vendorId: '' });
   const [vendorForm, setVendorForm] = useState({ name: '', phone: '', email: '', itemsSupplied: '' });
   const [purchaseForm, setPurchaseForm] = useState({ vendorId: '', ingredientId: '', quantity: '', cost: '', purchaseDate: today });
