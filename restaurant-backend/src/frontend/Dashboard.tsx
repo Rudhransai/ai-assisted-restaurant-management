@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { authFetch, clearAuth } from './auth';
+import { Billing } from './Billing';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -84,17 +85,18 @@ type FeedbackAnalytics = {
   oneStarCount: number; fiveStarCount: number; negativeGrowthPercent: number;
 };
 
-type ActiveTab = 'floor' | 'reservations' | 'waitlist' | 'orders' | 'inventory' | 'analytics' | 'staff' | 'feedback';
+type ActiveTab = 'floor' | 'reservations' | 'waitlist' | 'orders' | 'billing' | 'inventory' | 'analytics' | 'staff' | 'feedback';
 
 const tabLabels: Record<ActiveTab, string> = {
-  floor: '🏠 Floor Plan',
-  reservations: '📅 Reservations',
-  waitlist: '⏳ Waitlist',
-  orders: '🧾 Orders',
-  inventory: '📦 Inventory',
-  analytics: '📊 Analytics',
-  staff: '👥 Staff',
-  feedback: '💬 Feedback',
+  floor: 'Floor',
+  reservations: 'Reservations',
+  waitlist: 'Waitlist',
+  orders: 'Orders',
+  billing: 'Billing',
+  inventory: 'Inventory',
+  analytics: 'Analytics',
+  staff: 'Staff',
+  feedback: 'Feedback',
 };
 
 const MEAL_PERIOD_COLORS: Record<string, string> = {
@@ -112,31 +114,70 @@ function fmtPct(a: number, b: number) { return b === 0 ? '0%' : `${Math.round((a
 
 function StatCard({ label, value, tone, sub }: { label: string; value: string | number; tone: string; sub?: string }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm">
-      <p className="text-sm text-slate-500">{label}</p>
-      <p className={`mt-2 text-3xl font-semibold ${tone}`}>{value}</p>
-      {sub && <p className="mt-1 text-xs text-slate-400">{sub}</p>}
+    <div className="rounded-lg border border-line bg-white p-4">
+      <p className="eyebrow">{label}</p>
+      <p className={`mt-2 font-display text-3xl font-bold tabular ${tone}`}>{value}</p>
+      {sub && <p className="mt-1 text-xs text-ink-soft">{sub}</p>}
     </div>
   );
 }
 
 function SectionCard({ title, sub, children, action }: { title: string; sub?: string; children: React.ReactNode; action?: React.ReactNode }) {
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-sm">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-slate-800">{title}</h2>
-          {sub && <p className="text-sm text-slate-500">{sub}</p>}
+    <section className="rounded-lg border border-line bg-white">
+      <div className="flex flex-col gap-3 border-b border-line px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold text-ink">{title}</h2>
+          {sub && <p className="mt-0.5 text-sm text-ink-soft">{sub}</p>}
         </div>
-        {action}
+        {action && <div className="shrink-0">{action}</div>}
       </div>
-      {children}
-    </div>
+      <div className="p-5">{children}</div>
+    </section>
   );
 }
 
 function AlertBadge({ children }: { children: React.ReactNode }) {
-  return <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-700">{children}</span>;
+  return <span className="inline-flex items-center gap-1 rounded-full bg-busy/10 px-2.5 py-0.5 text-xs font-semibold text-busy">{children}</span>;
+}
+
+/**
+ * The pass rail — one pip per table, in table-number order.
+ *
+ * This is the signature element of the console: the whole floor reads in a single
+ * glance, the way a manager reads the pass, without scrolling to the floor plan.
+ * Colour maps to state and nothing else.
+ */
+function PassRail({ tables }: { tables: TableItem[] }) {
+  const toneFor = (status: string) =>
+    status === 'Available' ? 'bg-free' : status === 'Reserved' ? 'bg-hold' : 'bg-busy';
+
+  if (tables.length === 0) {
+    return <p className="text-sm text-ink-soft">No tables configured yet.</p>;
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1" role="img" aria-label={`Floor status across ${tables.length} tables`}>
+      {tables.map((t) => (
+        <span
+          key={t.id}
+          title={`Table ${t.tableNumber} — ${t.status}`}
+          className={`h-6 w-2.5 rounded-sm ${toneFor(t.status)}`}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** Legend for the rail and the floor map. Keeps the colour language explicit. */
+function StateKey() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-soft">
+      <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-free" />Free</span>
+      <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-hold" />Reserved</span>
+      <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-busy" />Occupied</span>
+    </div>
+  );
 }
 
 // ── Main Dashboard ────────────────────────────────────────────────────────────
@@ -487,104 +528,129 @@ export function Dashboard() {
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.16),_transparent_35%),linear-gradient(135deg,_#fffaf2_0%,_#f8fafc_100%)] p-4 md:p-8 text-slate-900">
-      <div className="mx-auto max-w-7xl">
+    <div className="min-h-screen bg-paper text-ink">
 
-        {/* Header */}
-        <header className="mb-8 rounded-3xl border border-amber-200/70 bg-white/90 p-6 shadow-[0_20px_60px_-20px_rgba(15,23,42,0.25)] backdrop-blur">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-            <div className="max-w-2xl">
-              <p className="mb-3 inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-sm font-semibold text-amber-800">Manager Console</p>
-              <h1 className="text-3xl font-semibold tracking-tight text-slate-800 sm:text-4xl">Restaurant Management</h1>
-              <p className="mt-3 text-sm leading-6 text-slate-600 sm:text-base">Reservations · Waitlist · Inventory · Sales Analytics — all in one workspace.</p>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <button onClick={handleSendReminders} className="rounded-2xl border border-emerald-600/20 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 cursor-pointer">Send reminders</button>
-              <button onClick={() => setShowWalkInForm(p => !p)} className="rounded-2xl border border-amber-600/20 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-700 hover:bg-amber-100 cursor-pointer">{showWalkInForm ? 'Hide walk-in form' : '+ Walk-in entry'}</button>
-              <button onClick={() => setShowReservationForm(p => !p)} className="rounded-2xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 cursor-pointer">{showReservationForm ? 'Hide reservation form' : 'New reservation'}</button>
-              <button onClick={() => { clearAuth(); window.location.href = '/login'; }} className="rounded-2xl border border-rose-600/20 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 hover:bg-rose-100 cursor-pointer">Sign out</button>
-            </div>
+      {/* Header rail — sticks to the top so the actions stay reachable mid-service. */}
+      <header className="sticky top-0 z-20 border-b border-ink bg-ink text-white">
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 md:px-8 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <p className="eyebrow text-white/55">Manager console</p>
+            <h1 className="mt-1 truncate font-display text-2xl font-bold text-white">Floor &amp; Service</h1>
           </div>
-        </header>
 
-        {/* KPI strip */}
-        <section className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <StatCard label="Occupied tables" value={stats.occupiedTables} tone="text-amber-700" />
-          <StatCard label="Reserved tables" value={stats.reservedTables} tone="text-sky-700" />
-          <StatCard label="Pending waitlist" value={stats.pendingWaitlist} tone="text-emerald-700" />
-          <StatCard label="Occupancy" value={`${stats.occupancyRate}%`} tone="text-slate-800" sub={occupancyLabel} />
-        </section>
+          {/* Horizontal scroll rather than wrap — four rows of buttons on a phone is unusable. */}
+          <div className="rail-scroll -mx-4 flex gap-2 overflow-x-auto px-4 lg:mx-0 lg:px-0">
+            <button onClick={handleSendReminders}
+              className="shrink-0 rounded-md border border-white/20 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-white/10">
+              Send reminders
+            </button>
+            <button onClick={() => setShowWalkInForm(p => !p)}
+              className="shrink-0 rounded-md border border-white/20 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-white/10">
+              {showWalkInForm ? 'Close walk-in' : 'Add walk-in'}
+            </button>
+            <button onClick={() => setShowReservationForm(p => !p)}
+              className="shrink-0 rounded-md bg-white px-3.5 py-2 text-sm font-semibold text-ink transition hover:bg-white/85">
+              {showReservationForm ? 'Close reservation' : 'New reservation'}
+            </button>
+            <button onClick={() => { clearAuth(); window.location.href = '/login'; }}
+              className="shrink-0 rounded-md px-3.5 py-2 text-sm font-semibold text-white/70 transition hover:text-white">
+              Sign out
+            </button>
+          </div>
+        </div>
+      </header>
 
-        {/* Service pulse */}
-        <section className="mb-8 grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
-          <div className="rounded-3xl border border-slate-200 bg-white/90 p-5 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-slate-500">Service pulse</p>
-                <h2 className="text-xl font-semibold text-slate-800">{occupancyLabel}</h2>
-              </div>
-              <button onClick={() => void refreshDashboard()} className="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 cursor-pointer">
+      <div className="mx-auto max-w-7xl px-4 py-6 md:px-8">
+
+        {/* Pass rail — the whole floor in one glance. */}
+        <section className="mb-6 rounded-lg border border-line bg-white p-5">
+          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="eyebrow">Right now</p>
+              <h2 className="mt-0.5 text-lg font-semibold">{occupancyLabel}</h2>
+            </div>
+            <div className="flex flex-wrap items-center gap-4">
+              <StateKey />
+              <button onClick={() => void refreshDashboard()}
+                className="rounded-md border border-line px-3 py-1.5 text-xs font-semibold text-ink-soft transition hover:bg-paper">
                 {isRefreshing ? 'Refreshing…' : `Updated ${lastUpdated || 'just now'}`}
               </button>
             </div>
-            <div className="h-3 overflow-hidden rounded-full bg-slate-100">
-              <div className="h-3 rounded-full bg-gradient-to-r from-amber-500 to-orange-500" style={{ width: `${stats.occupancyRate}%` }} />
-            </div>
-            <p className="mt-3 text-sm text-slate-600">Managing {stats.occupiedTables} occupied tables and {stats.pendingWaitlist} guests waiting.</p>
           </div>
-          <div className="rounded-3xl border border-slate-200 bg-slate-900 p-5 text-white shadow-sm">
-            <p className="text-sm font-semibold text-slate-300">Quick overview</p>
-            <h2 className="mt-2 text-xl font-semibold">Ready for service</h2>
-            <ul className="mt-4 space-y-2 text-sm text-slate-300">
-              <li>• Reservations & waitlist synced live</li>
-              <li>• Inventory tracked with reorder alerts</li>
-              <li>• Sales & menu performance analytics</li>
-              <li>• Wastage, purchases & vendor management</li>
-            </ul>
-          </div>
+
+          <PassRail tables={tables} />
+
+          <p className="mt-3 text-sm text-ink-soft">
+            <span className="data font-semibold text-ink">{stats.occupiedTables}</span> of{' '}
+            <span className="data font-semibold text-ink">{tables.length}</span> tables occupied
+            {stats.pendingWaitlist > 0 && (
+              <> · <span className="data font-semibold text-ink">{stats.pendingWaitlist}</span> waiting</>
+            )}
+            {reservations.length > 0 && (
+              <> · <span className="data font-semibold text-ink">{reservations.length}</span> booked today</>
+            )}
+          </p>
         </section>
 
-        {/* Tabs */}
-        <nav className="mb-6 flex flex-wrap gap-2 border-b border-slate-200 pb-3">
-          {(Object.keys(tabLabels) as ActiveTab[]).map((tab) => (
-            <button key={tab} onClick={() => setActiveTab(tab)}
-              className={`rounded-full px-4 py-2 text-sm font-semibold transition cursor-pointer ${activeTab === tab ? 'bg-slate-900 text-white shadow' : 'bg-white text-slate-600 hover:bg-slate-100'}`}>
-              {tabLabels[tab]}
-              {tab === 'orders' && orders.length > 0 && <span className="ml-1.5 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white">{orders.length}</span>}
-              {tab === 'inventory' && (invAnalytics?.reorderAlerts?.length ?? 0) > 0 && <span className="ml-1.5 rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold text-white">{invAnalytics!.reorderAlerts.length}</span>}
-            </button>
-          ))}
+        {/* KPI strip */}
+        <section className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Occupied" value={stats.occupiedTables} tone="text-busy" />
+          <StatCard label="Reserved" value={stats.reservedTables} tone="text-hold" />
+          <StatCard label="Waiting" value={stats.pendingWaitlist} tone="text-free" {...(waitlist.length > 0 ? { sub: `${waitlist.length} on the list` } : {})} />
+          <StatCard label="Occupancy" value={`${stats.occupancyRate}%`} tone="text-ink" sub={occupancyLabel} />
+        </section>
+
+        {/* Tabs — scroll on narrow screens instead of wrapping. */}
+        <nav aria-label="Console sections" className="rail-scroll -mx-4 mb-6 flex gap-1 overflow-x-auto border-b border-line px-4 md:mx-0 md:px-0">
+          {(Object.keys(tabLabels) as ActiveTab[]).map((tab) => {
+            const isActive = activeTab === tab;
+            const alerts = tab === 'inventory' ? (invAnalytics?.reorderAlerts?.length ?? 0) : tab === 'orders' ? orders.length : 0;
+            return (
+              <button key={tab} onClick={() => setActiveTab(tab)}
+                aria-current={isActive ? 'page' : undefined}
+                className={`-mb-px shrink-0 border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
+                  isActive ? 'border-ink text-ink' : 'border-transparent text-ink-soft hover:text-ink'
+                }`}>
+                {tabLabels[tab]}
+                {alerts > 0 && (
+                  <span className={`data ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                    tab === 'inventory' ? 'bg-busy/10 text-busy' : 'bg-ink/8 text-ink-soft'
+                  }`}>{alerts}</span>
+                )}
+              </button>
+            );
+          })}
         </nav>
 
         {/* Walk-in & reservation forms */}
         {showWalkInForm && (
-          <form onSubmit={handleCreateWalkIn} className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
-            <p className="mb-3 text-sm font-semibold text-amber-800">Walk-in / Waitlist Entry</p>
-            <div className="grid gap-3 md:grid-cols-3">
-              <input value={walkInForm.guestName} onChange={e => setWalkInForm({ ...walkInForm, guestName: e.target.value })} className="rounded-xl border border-slate-300 bg-white px-3 py-2.5" placeholder="Guest name" required />
-              <input value={walkInForm.partySize} onChange={e => setWalkInForm({ ...walkInForm, partySize: e.target.value })} className="rounded-xl border border-slate-300 bg-white px-3 py-2.5" placeholder="Party size" type="number" min="1" />
-              <input value={walkInForm.phone} onChange={e => setWalkInForm({ ...walkInForm, phone: e.target.value })} className="rounded-xl border border-slate-300 bg-white px-3 py-2.5" placeholder="Phone" />
+          <form onSubmit={handleCreateWalkIn} className="mb-6 rounded-lg border border-line bg-white p-5">
+            <p className="eyebrow mb-3">Add walk-in to waitlist</p>
+            <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+              <input value={walkInForm.guestName} onChange={e => setWalkInForm({ ...walkInForm, guestName: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5" placeholder="Guest name" required />
+              <input value={walkInForm.partySize} onChange={e => setWalkInForm({ ...walkInForm, partySize: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5" placeholder="Party size" type="number" min="1" />
+              <input value={walkInForm.phone} onChange={e => setWalkInForm({ ...walkInForm, phone: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5" placeholder="Phone" />
             </div>
-            <div className="mt-3 flex justify-end"><button type="submit" className="rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800 cursor-pointer">Add to waitlist</button></div>
+            <div className="mt-4 flex justify-end"><button type="submit" className="rounded-md bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-ink-soft">Add to waitlist</button></div>
           </form>
         )}
 
         {showReservationForm && (
-          <form onSubmit={handleCreateReservation} className="mb-6 rounded-2xl border border-sky-200 bg-sky-50 p-4 shadow-sm">
-            <p className="mb-3 text-sm font-semibold text-sky-800">New Reservation</p>
-            <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
-              <input value={reservationForm.guestName} onChange={e => setReservationForm({ ...reservationForm, guestName: e.target.value })} className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 lg:col-span-2" placeholder="Guest name" required />
-              <input value={reservationForm.partySize} onChange={e => setReservationForm({ ...reservationForm, partySize: e.target.value })} className="rounded-xl border border-slate-300 bg-white px-3 py-2.5" placeholder="Party size" type="number" min="1" />
-              <input value={reservationForm.time} onChange={e => setReservationForm({ ...reservationForm, time: e.target.value })} className="rounded-xl border border-slate-300 bg-white px-3 py-2.5" placeholder="Time (HH:MM)" />
-              <input value={reservationForm.phone} onChange={e => setReservationForm({ ...reservationForm, phone: e.target.value })} className="rounded-xl border border-slate-300 bg-white px-3 py-2.5" placeholder="Phone" />
-              <input value={reservationForm.email} onChange={e => setReservationForm({ ...reservationForm, email: e.target.value })} className="rounded-xl border border-slate-300 bg-white px-3 py-2.5" placeholder="Email (for reminder)" />
+          <form onSubmit={handleCreateReservation} className="mb-6 rounded-lg border border-line bg-white p-5">
+            <p className="eyebrow mb-3">New reservation</p>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+              <input value={reservationForm.guestName} onChange={e => setReservationForm({ ...reservationForm, guestName: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5 lg:col-span-2" placeholder="Guest name" required />
+              <input value={reservationForm.partySize} onChange={e => setReservationForm({ ...reservationForm, partySize: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5" placeholder="Party size" type="number" min="1" />
+              <input value={reservationForm.time} onChange={e => setReservationForm({ ...reservationForm, time: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5" placeholder="Time (HH:MM)" />
+              <input value={reservationForm.phone} onChange={e => setReservationForm({ ...reservationForm, phone: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5" placeholder="Phone" />
+              <input value={reservationForm.email} onChange={e => setReservationForm({ ...reservationForm, email: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5" placeholder="Email (for reminder)" />
             </div>
-            <div className="mt-3 flex items-center gap-3">
-              <label className="text-sm text-slate-600">Table:</label>
-              <select value={reservationForm.tableId} onChange={e => setReservationForm({ ...reservationForm, tableId: e.target.value })} className="rounded-xl border border-slate-300 bg-white px-3 py-2">
+            <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <label htmlFor="res-table" className="text-sm text-ink-soft">Table</label>
+              <select id="res-table" value={reservationForm.tableId} onChange={e => setReservationForm({ ...reservationForm, tableId: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5">
                 {tables.map(t => <option key={t.id} value={t.id}>Table {t.tableNumber} ({t.zone}, {t.capacity} seats)</option>)}
               </select>
-              <button type="submit" className="ml-auto rounded-xl bg-sky-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-800 cursor-pointer">Save reservation</button>
+              <button type="submit" className="rounded-md bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-ink-soft sm:ml-auto">Save reservation</button>
             </div>
           </form>
         )}
@@ -595,7 +661,7 @@ export function Dashboard() {
           {activeTab === 'floor' && (
             <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
               <SectionCard title="Live floor map" sub="Tap a table to manage it. Bell icons show customers waiting to be notified."
-                action={<div className="flex gap-2 text-xs text-slate-500"><span className="rounded-full bg-emerald-100 px-2.5 py-1">Available</span><span className="rounded-full bg-rose-100 px-2.5 py-1">Occupied</span><span className="rounded-full bg-sky-100 px-2.5 py-1">Reserved</span></div>}>
+                action={<StateKey />}>
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                   {tables.map((table) => {
                     const watch = watchMap.get(table.id);
@@ -653,10 +719,10 @@ export function Dashboard() {
               {/* Reservation Analytics */}
               {salesAnalytics && (
                 <div className="grid gap-4 md:grid-cols-4">
-                  <StatCard label="Total Reservations" value={salesAnalytics.reservationAnalytics.total ?? 0} tone="text-sky-700" />
-                  <StatCard label="No-Shows" value={salesAnalytics.reservationAnalytics.noShow ?? 0} tone="text-rose-700" sub={`${fmtPct(salesAnalytics.reservationAnalytics.noShow ?? 0, salesAnalytics.reservationAnalytics.total ?? 1)} rate`} />
-                  <StatCard label="Avg Party Size" value={(salesAnalytics.reservationAnalytics.avgPartySize ?? 0).toFixed(1)} tone="text-amber-700" />
-                  <StatCard label="Peak Time" value={salesAnalytics.peakTime ?? '—'} tone="text-emerald-700" />
+                  <StatCard label="Total Reservations" value={salesAnalytics.reservationAnalytics.total ?? 0} tone="text-ink" />
+                  <StatCard label="No-Shows" value={salesAnalytics.reservationAnalytics.noShow ?? 0} tone="text-busy" sub={`${fmtPct(salesAnalytics.reservationAnalytics.noShow ?? 0, salesAnalytics.reservationAnalytics.total ?? 1)} rate`} />
+                  <StatCard label="Avg Party Size" value={(salesAnalytics.reservationAnalytics.avgPartySize ?? 0).toFixed(1)} tone="text-hold" />
+                  <StatCard label="Peak Time" value={salesAnalytics.peakTime ?? '—'} tone="text-free" />
                 </div>
               )}
               <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white/90 shadow-sm">
@@ -719,9 +785,9 @@ export function Dashboard() {
           {activeTab === 'orders' && (
             <div className="space-y-8">
               <div className="grid gap-4 md:grid-cols-3">
-                <StatCard label="Total Orders" value={orders.length} tone="text-slate-800" />
-                <StatCard label="Total Revenue" value={fmt(totalOrderRevenue)} tone="text-emerald-700" />
-                <StatCard label="Avg Bill" value={orders.length > 0 ? fmt(totalOrderRevenue / orders.length) : '₹0'} tone="text-amber-700" />
+                <StatCard label="Total Orders" value={orders.length} tone="text-ink" />
+                <StatCard label="Total Revenue" value={fmt(totalOrderRevenue)} tone="text-free" />
+                <StatCard label="Avg Bill" value={orders.length > 0 ? fmt(totalOrderRevenue / orders.length) : '₹0'} tone="text-hold" />
               </div>
               <SectionCard title="Dish order counts" sub="Total quantities ordered across all orders." action={<button onClick={() => void refreshOrders()} className="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 cursor-pointer">Refresh</button>}>
                 {dishStats.length === 0 ? <p className="text-sm text-slate-400 italic">No orders placed yet.</p> : (
@@ -798,10 +864,10 @@ export function Dashboard() {
               {invSubTab === 'overview' && invAnalytics && (
                 <div className="space-y-6">
                   <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                    <StatCard label="Inventory Value" value={fmt(invAnalytics.totalInventoryValue)} tone="text-emerald-700" />
-                    <StatCard label="Low Stock Items" value={invAnalytics.lowStockItems.length} tone={invAnalytics.lowStockItems.length > 0 ? 'text-rose-700' : 'text-slate-700'} />
-                    <StatCard label="Monthly Wastage Cost" value={fmt(invAnalytics.monthlyWastageCost)} tone="text-rose-700" />
-                    <StatCard label="Monthly Purchase Cost" value={fmt(invAnalytics.monthlyPurchaseCost)} tone="text-amber-700" />
+                    <StatCard label="Inventory Value" value={fmt(invAnalytics.totalInventoryValue)} tone="text-free" />
+                    <StatCard label="Low Stock Items" value={invAnalytics.lowStockItems.length} tone={invAnalytics.lowStockItems.length > 0 ? 'text-busy' : 'text-ink'} />
+                    <StatCard label="Monthly Wastage Cost" value={fmt(invAnalytics.monthlyWastageCost)} tone="text-busy" />
+                    <StatCard label="Monthly Purchase Cost" value={fmt(invAnalytics.monthlyPurchaseCost)} tone="text-hold" />
                   </div>
 
                   {/* Reorder Alerts */}
@@ -1148,9 +1214,9 @@ export function Dashboard() {
                   {salesAnalytics ? (
                     <>
                       <div className="grid gap-4 md:grid-cols-3">
-                        <StatCard label="Total Revenue" value={fmt(salesAnalytics.totals.totalRevenue)} tone="text-emerald-700" />
-                        <StatCard label="Total Orders" value={salesAnalytics.totals.totalOrders} tone="text-slate-800" />
-                        <StatCard label="Avg Bill Value" value={fmt(salesAnalytics.totals.avgBillValue)} tone="text-amber-700" />
+                        <StatCard label="Total Revenue" value={fmt(salesAnalytics.totals.totalRevenue)} tone="text-free" />
+                        <StatCard label="Total Orders" value={salesAnalytics.totals.totalOrders} tone="text-ink" />
+                        <StatCard label="Avg Bill Value" value={fmt(salesAnalytics.totals.avgBillValue)} tone="text-hold" />
                       </div>
 
                       {/* Meal Period Analysis */}
@@ -1327,10 +1393,10 @@ export function Dashboard() {
                   {salesAnalytics ? (
                     <>
                       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                        <StatCard label="Total Reservations" value={salesAnalytics.reservationAnalytics.total ?? 0} tone="text-sky-700" />
-                        <StatCard label="No-Shows" value={salesAnalytics.reservationAnalytics.noShow ?? 0} tone="text-rose-700" sub={`${fmtPct(salesAnalytics.reservationAnalytics.noShow ?? 0, salesAnalytics.reservationAnalytics.total ?? 1)} no-show rate`} />
-                        <StatCard label="Avg Party Size" value={(salesAnalytics.reservationAnalytics.avgPartySize ?? 0).toFixed(1)} tone="text-amber-700" />
-                        <StatCard label="Peak Booking Time" value={salesAnalytics.peakTime ?? '—'} tone="text-emerald-700" />
+                        <StatCard label="Total Reservations" value={salesAnalytics.reservationAnalytics.total ?? 0} tone="text-ink" />
+                        <StatCard label="No-Shows" value={salesAnalytics.reservationAnalytics.noShow ?? 0} tone="text-busy" sub={`${fmtPct(salesAnalytics.reservationAnalytics.noShow ?? 0, salesAnalytics.reservationAnalytics.total ?? 1)} no-show rate`} />
+                        <StatCard label="Avg Party Size" value={(salesAnalytics.reservationAnalytics.avgPartySize ?? 0).toFixed(1)} tone="text-hold" />
+                        <StatCard label="Peak Booking Time" value={salesAnalytics.peakTime ?? '—'} tone="text-free" />
                       </div>
 
                       <SectionCard title="Table Occupancy Overview" sub="Current real-time table status breakdown.">
@@ -1410,11 +1476,11 @@ export function Dashboard() {
                 <div className="space-y-6">
                   {staffAnalytics && (
                     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                      <StatCard label="Total Employees" value={staffAnalytics.totalEmployees} tone="text-slate-800" />
-                      <StatCard label="Active Employees" value={staffAnalytics.activeEmployees} tone="text-emerald-700" />
-                      <StatCard label="Today — Present" value={staffAnalytics.todayAttendance.present} tone="text-sky-700" sub={`Absent: ${staffAnalytics.todayAttendance.absent} · On Leave: ${staffAnalytics.todayAttendance.on_leave}`} />
-                      <StatCard label="Pending Leave Requests" value={staffAnalytics.pendingLeaveRequests} tone="text-amber-700" />
-                      <StatCard label="Avg Working Hours (this month)" value={`${staffAnalytics.avgWorkingHoursThisMonth} h`} tone="text-purple-700" />
+                      <StatCard label="Total Employees" value={staffAnalytics.totalEmployees} tone="text-ink" />
+                      <StatCard label="Active Employees" value={staffAnalytics.activeEmployees} tone="text-free" />
+                      <StatCard label="Today — Present" value={staffAnalytics.todayAttendance.present} tone="text-ink" sub={`Absent: ${staffAnalytics.todayAttendance.absent} · On Leave: ${staffAnalytics.todayAttendance.on_leave}`} />
+                      <StatCard label="Pending Leave Requests" value={staffAnalytics.pendingLeaveRequests} tone="text-hold" />
+                      <StatCard label="Avg Working Hours (this month)" value={`${staffAnalytics.avgWorkingHoursThisMonth} h`} tone="text-ink" />
                     </div>
                   )}
 
@@ -1777,15 +1843,15 @@ export function Dashboard() {
               {feedbackSubTab === 'overview' && feedbackAnalytics && (
                 <div className="space-y-6">
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    <StatCard label="Total Reviews" value={feedbackAnalytics.totalReviews} tone="text-slate-800" sub={`${feedbackAnalytics.reviewGrowthPercent >= 0 ? '+' : ''}${feedbackAnalytics.reviewGrowthPercent}% vs last 30 days`} />
-                    <StatCard label="Average Rating" value={`${feedbackAnalytics.averageRating} ★`} tone="text-amber-600" />
-                    <StatCard label="Positive Reviews" value={`${feedbackAnalytics.positivePercent}%`} tone="text-emerald-700" sub={`${feedbackAnalytics.positiveCount} reviews`} />
+                    <StatCard label="Total Reviews" value={feedbackAnalytics.totalReviews} tone="text-ink" sub={`${feedbackAnalytics.reviewGrowthPercent >= 0 ? '+' : ''}${feedbackAnalytics.reviewGrowthPercent}% vs last 30 days`} />
+                    <StatCard label="Average Rating" value={`${feedbackAnalytics.averageRating} ★`} tone="text-hold" />
+                    <StatCard label="Positive Reviews" value={`${feedbackAnalytics.positivePercent}%`} tone="text-free" sub={`${feedbackAnalytics.positiveCount} reviews`} />
                     <StatCard label="Reputation Score" value={`${feedbackAnalytics.reputationScore}/100`} tone={feedbackAnalytics.reputationScore >= 70 ? 'text-emerald-700' : feedbackAnalytics.reputationScore >= 50 ? 'text-amber-600' : 'text-rose-600'} />
                   </div>
                   <div className="grid gap-4 md:grid-cols-3">
-                    <StatCard label="Negative Reviews" value={`${feedbackAnalytics.negativePercent}%`} tone="text-rose-600" sub={`${feedbackAnalytics.negativeCount} reviews`} />
-                    <StatCard label="Neutral Reviews" value={`${feedbackAnalytics.neutralPercent}%`} tone="text-slate-600" sub={`${feedbackAnalytics.neutralCount} reviews`} />
-                    <StatCard label="Top Category" value={feedbackAnalytics.topCategory} tone="text-purple-700" />
+                    <StatCard label="Negative Reviews" value={`${feedbackAnalytics.negativePercent}%`} tone="text-busy" sub={`${feedbackAnalytics.negativeCount} reviews`} />
+                    <StatCard label="Neutral Reviews" value={`${feedbackAnalytics.neutralPercent}%`} tone="text-ink-soft" sub={`${feedbackAnalytics.neutralCount} reviews`} />
+                    <StatCard label="Top Category" value={feedbackAnalytics.topCategory} tone="text-ink" />
                   </div>
 
                   <div className="grid gap-6 xl:grid-cols-2">
@@ -1990,9 +2056,9 @@ export function Dashboard() {
               {feedbackSubTab === 'categories' && feedbackAnalytics && (
                 <div className="space-y-6">
                   <div className="grid gap-4 md:grid-cols-3">
-                    <StatCard label="Total Categories" value={feedbackAnalytics.categoryDistribution.length} tone="text-slate-800" />
-                    <StatCard label="Most Discussed" value={feedbackAnalytics.topCategory} tone="text-purple-700" />
-                    <StatCard label="Least Discussed" value={feedbackAnalytics.leastCategory} tone="text-slate-500" />
+                    <StatCard label="Total Categories" value={feedbackAnalytics.categoryDistribution.length} tone="text-ink" />
+                    <StatCard label="Most Discussed" value={feedbackAnalytics.topCategory} tone="text-ink" />
+                    <StatCard label="Least Discussed" value={feedbackAnalytics.leastCategory} tone="text-ink-soft" />
                   </div>
 
                   <SectionCard title="Category Distribution" sub="How often each theme appears in reviews and the average rating per category.">
@@ -2050,8 +2116,8 @@ export function Dashboard() {
               {feedbackSubTab === 'trends' && feedbackAnalytics && (
                 <div className="space-y-6">
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    <StatCard label="Top Improving Category" value={feedbackAnalytics.topImprovingCategory} tone="text-emerald-700" sub="Best rating improvement vs prior period" />
-                    <StatCard label="Top Declining Category" value={feedbackAnalytics.topDecliningCategory} tone="text-rose-600" sub="Largest rating drop vs prior period" />
+                    <StatCard label="Top Improving Category" value={feedbackAnalytics.topImprovingCategory} tone="text-free" sub="Best rating improvement vs prior period" />
+                    <StatCard label="Top Declining Category" value={feedbackAnalytics.topDecliningCategory} tone="text-busy" sub="Largest rating drop vs prior period" />
                     <StatCard label="Rating Trend" value={feedbackAnalytics.ratingTrendDirection === 'up' ? '↑ Improving' : feedbackAnalytics.ratingTrendDirection === 'down' ? '↓ Declining' : '→ Stable'} tone={feedbackAnalytics.ratingTrendDirection === 'up' ? 'text-emerald-700' : feedbackAnalytics.ratingTrendDirection === 'down' ? 'text-rose-600' : 'text-slate-600'} />
                     <StatCard label="Review Growth" value={`${feedbackAnalytics.reviewGrowthPercent >= 0 ? '+' : ''}${feedbackAnalytics.reviewGrowthPercent}%`} tone={feedbackAnalytics.reviewGrowthPercent >= 0 ? 'text-emerald-700' : 'text-rose-600'} sub="Last 30 days vs prior 30" />
                   </div>
@@ -2139,10 +2205,10 @@ export function Dashboard() {
               {feedbackSubTab === 'satisfaction' && feedbackAnalytics && (
                 <div className="space-y-6">
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    <StatCard label="Average Rating" value={`${feedbackAnalytics.averageRating} ★`} tone="text-amber-600" />
-                    <StatCard label="Positive %" value={`${feedbackAnalytics.positivePercent}%`} tone="text-emerald-700" sub={`${feedbackAnalytics.positiveCount} reviews`} />
-                    <StatCard label="Neutral %" value={`${feedbackAnalytics.neutralPercent}%`} tone="text-slate-600" sub={`${feedbackAnalytics.neutralCount} reviews`} />
-                    <StatCard label="Negative %" value={`${feedbackAnalytics.negativePercent}%`} tone="text-rose-600" sub={`${feedbackAnalytics.negativeCount} reviews`} />
+                    <StatCard label="Average Rating" value={`${feedbackAnalytics.averageRating} ★`} tone="text-hold" />
+                    <StatCard label="Positive %" value={`${feedbackAnalytics.positivePercent}%`} tone="text-free" sub={`${feedbackAnalytics.positiveCount} reviews`} />
+                    <StatCard label="Neutral %" value={`${feedbackAnalytics.neutralPercent}%`} tone="text-ink-soft" sub={`${feedbackAnalytics.neutralCount} reviews`} />
+                    <StatCard label="Negative %" value={`${feedbackAnalytics.negativePercent}%`} tone="text-busy" sub={`${feedbackAnalytics.negativeCount} reviews`} />
                   </div>
 
                   <SectionCard title="Monthly Satisfaction Breakdown" sub="Month-by-month positive, neutral, and negative review counts.">
@@ -2195,9 +2261,9 @@ export function Dashboard() {
                       <p className={`mt-2 text-5xl font-bold ${feedbackAnalytics.reputationScore >= 70 ? 'text-emerald-700' : feedbackAnalytics.reputationScore >= 50 ? 'text-amber-600' : 'text-rose-600'}`}>{feedbackAnalytics.reputationScore}</p>
                       <p className="mt-1 text-xs text-slate-400">out of 100</p>
                     </div>
-                    <StatCard label="Average Rating" value={`${feedbackAnalytics.averageRating} ★`} tone="text-amber-600" sub={`Trend: ${feedbackAnalytics.ratingTrendDirection === 'up' ? '↑ Improving' : feedbackAnalytics.ratingTrendDirection === 'down' ? '↓ Declining' : '→ Stable'}`} />
-                    <StatCard label="5-Star Reviews" value={feedbackAnalytics.fiveStarCount} tone="text-emerald-700" sub={`${feedbackAnalytics.totalReviews === 0 ? 0 : Math.round((feedbackAnalytics.fiveStarCount / feedbackAnalytics.totalReviews) * 100)}% of total`} />
-                    <StatCard label="1-Star Reviews" value={feedbackAnalytics.oneStarCount} tone="text-rose-600" sub={`${feedbackAnalytics.totalReviews === 0 ? 0 : Math.round((feedbackAnalytics.oneStarCount / feedbackAnalytics.totalReviews) * 100)}% of total`} />
+                    <StatCard label="Average Rating" value={`${feedbackAnalytics.averageRating} ★`} tone="text-hold" sub={`Trend: ${feedbackAnalytics.ratingTrendDirection === 'up' ? '↑ Improving' : feedbackAnalytics.ratingTrendDirection === 'down' ? '↓ Declining' : '→ Stable'}`} />
+                    <StatCard label="5-Star Reviews" value={feedbackAnalytics.fiveStarCount} tone="text-free" sub={`${feedbackAnalytics.totalReviews === 0 ? 0 : Math.round((feedbackAnalytics.fiveStarCount / feedbackAnalytics.totalReviews) * 100)}% of total`} />
+                    <StatCard label="1-Star Reviews" value={feedbackAnalytics.oneStarCount} tone="text-busy" sub={`${feedbackAnalytics.totalReviews === 0 ? 0 : Math.round((feedbackAnalytics.oneStarCount / feedbackAnalytics.totalReviews) * 100)}% of total`} />
                   </div>
 
                   <div className="grid gap-6 xl:grid-cols-2">
@@ -2329,6 +2395,10 @@ export function Dashboard() {
               )}
 
             </div>
+          )}
+
+          {activeTab === 'billing' && (
+            <Billing orders={orders} SectionCard={SectionCard} />
           )}
 
         </main>

@@ -19,7 +19,34 @@ export interface AuthTokenPayload {
   role: UserRole;
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || 'restaurant-dev-secret-change-in-production';
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+/**
+ * A shared fallback secret means anyone who has read this repository can mint a valid
+ * manager token. Allowed in development for convenience, refused in production.
+ */
+function resolveJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+
+  if (secret && secret.length >= 32) return secret;
+
+  if (IS_PRODUCTION) {
+    throw new Error(
+      'JWT_SECRET must be set to at least 32 characters in production. Generate one with:\n' +
+        '  node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"'
+    );
+  }
+
+  if (secret) {
+    console.warn('[Auth] JWT_SECRET is shorter than 32 characters — use a longer one.');
+    return secret;
+  }
+
+  console.warn('[Auth] JWT_SECRET is not set. Using an insecure development secret.');
+  return 'restaurant-dev-secret-change-in-production';
+}
+
+const JWT_SECRET = resolveJwtSecret();
 const JWT_EXPIRES_IN = '7d';
 
 export class AuthService {
@@ -39,6 +66,13 @@ export class AuthService {
 
     const managerEmail = process.env.MANAGER_EMAIL || 'manager@restaurant.com';
     const managerPassword = process.env.MANAGER_PASSWORD || 'manager123';
+
+    if (IS_PRODUCTION && !process.env.MANAGER_PASSWORD) {
+      throw new Error(
+        'MANAGER_PASSWORD must be set in production. The default seed password is public in this repository.'
+      );
+    }
+
     const existing = await this.pool.query('SELECT id FROM users WHERE email = $1', [managerEmail]);
 
     if (existing.rows.length === 0) {

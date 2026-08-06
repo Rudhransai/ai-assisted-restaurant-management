@@ -1,25 +1,94 @@
+/* Fonts must be imported before Tailwind so the cascade resolves correctly. */
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 @import "tailwindcss";
+
+/*
+  Design tokens — Floor Console
+  ------------------------------------------------------------------
+  This is a service-floor tool, read at a glance while standing up.
+  Colour is not decoration here: each accent maps to one table state,
+  so the same green always means "free" wherever it appears.
+*/
+@theme {
+  --color-ink:      #101418;  /* header rail, primary text */
+  --color-ink-soft: #3B4149;  /* secondary text */
+  --color-paper:    #EFF1EE;  /* page ground */
+  --color-line:     #D8DCD6;  /* hairlines, borders */
+
+  --color-free:     #0F6E5C;  /* table available */
+  --color-hold:     #A67C00;  /* reserved / waiting */
+  --color-busy:     #B3261E;  /* occupied / alert */
+
+  --font-display: 'Archivo', system-ui, sans-serif;
+  --font-body:    'Public Sans', system-ui, sans-serif;
+  --font-data:    'IBM Plex Mono', ui-monospace, monospace;
+}
 
 :root {
   color-scheme: light;
-  font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+  font-family: var(--font-body);
   line-height: 1.5;
-  font-weight: 400;
-  background-color: #f8fafc;
-  color: #0f172a;
+  background-color: var(--color-paper);
+  color: var(--color-ink);
 }
 
 body {
   margin: 0;
   min-height: 100vh;
-  background: #f8fafc;
+  background: var(--color-paper);
+  -webkit-font-smoothing: antialiased;
 }
 
-* {
-  box-sizing: border-box;
+* { box-sizing: border-box; }
+
+button, input, select, textarea { font: inherit; }
+
+/* Headings carry the personality; the body face stays quiet. */
+h1, h2, h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.015em;
 }
 
-button,
-input {
-  font: inherit;
+/* Figures line up in columns — essential when scanning covers and totals. */
+.tabular, table td, table th {
+  font-variant-numeric: tabular-nums;
+}
+
+.data { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+
+/* An eyebrow label: small, wide, quiet. Used above section titles. */
+.eyebrow {
+  font-family: var(--font-display);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+}
+
+/* Keyboard focus must stay visible — managers tab through these forms fast. */
+:focus-visible {
+  outline: 2px solid var(--color-ink);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Every touch target clears 44px on coarse pointers. */
+@media (pointer: coarse) {
+  button, a[role='button'], select { min-height: 44px; }
+}
+
+/* Horizontal tab strip: scrolls instead of wrapping into four rows on a phone. */
+.rail-scroll {
+  scrollbar-width: none;
+  scroll-snap-type: x proximity;
+}
+.rail-scroll::-webkit-scrollbar { display: none; }
+.rail-scroll > * { scroll-snap-align: start; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

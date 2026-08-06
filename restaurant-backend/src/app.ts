@@ -1,5 +1,14 @@
-import dotenv from 'dotenv';
-dotenv.config();
+// MUST be the first import.
+//
+// ES modules evaluate every import fully before any top-level code in this file runs.
+// With `import dotenv` followed by `dotenv.config()`, modules like config/db.ts and
+// services/authService.ts were already evaluated — and had already read process.env —
+// before .env was ever loaded. The result: the pool silently connected to the default
+// database instead of DATABASE_URL, and JWT_SECRET always looked unset.
+//
+// `dotenv/config` runs on import, and imports are evaluated in source order, so putting
+// it first guarantees .env is loaded before anything else reads process.env.
+import 'dotenv/config';
 
 import express from 'express';
 import path from 'path';
@@ -10,6 +19,7 @@ import { RestaurantDbStore } from './services/restaurantDbStore';
 import { InventoryDbStore } from './services/inventoryDbStore';
 import { StaffDbStore } from './services/staffDbStore';
 import { FeedbackDbStore } from './services/feedbackDbStore';
+import { BillingDbStore } from './services/billingDbStore';
 import { restaurantStore as memoryStore } from './services/restaurantStore';
 import { errorHandler } from './middleware/errorHandler';
 import { ReminderScheduler } from './services/reminderScheduler';
@@ -35,17 +45,44 @@ const dbStore = new RestaurantDbStore(pool);
 const inventoryStore = new InventoryDbStore(pool);
 const staffStore = new StaffDbStore(pool);
 const feedbackStore = new FeedbackDbStore(pool);
+const billingStore = new BillingDbStore(pool);
 const authService = new AuthService(pool);
 const { requireAuth } = createAuthMiddleware(authService);
 let activeStore: RestaurantStoreLike = memoryStore;
 const allowMemoryFallback = process.env.ALLOW_MEMORY_FALLBACK === 'true';
 
+/**
+ * Postgres connection-level error codes. Anything else (a constraint violation, a bad
+ * party size, a missing row) is an application error and must surface to the caller.
+ */
+const CONNECTION_ERROR_CODES = new Set([
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'ETIMEDOUT',
+  'ECONNRESET',
+  'EPIPE',
+  '08000', // connection_exception
+  '08003', // connection_does_not_exist
+  '08006', // connection_failure
+  '57P01', // admin_shutdown
+  '57P03', // cannot_connect_now
+]);
+
+const isConnectionError = (error: unknown): boolean => {
+  const code = (error as { code?: string })?.code;
+  return typeof code === 'string' && CONNECTION_ERROR_CODES.has(code);
+};
+
 const executeWithFallback = async <T>(operation: (store: RestaurantStoreLike) => Promise<T> | T) => {
   try {
     return await operation(activeStore);
   } catch (error) {
-    if (activeStore !== memoryStore) {
-      console.warn('Postgres unavailable, switching to in-memory store', error);
+    // Previously ANY error flipped the whole process to the in-memory store permanently —
+    // one bad request silently detached the app from the database, and the retry could
+    // double-apply a write. Only genuine connection loss falls back now, and only when
+    // the operator opted in.
+    if (allowMemoryFallback && activeStore !== memoryStore && isConnectionError(error)) {
+      console.warn('Postgres connection lost, switching to in-memory store', error);
       activeStore = memoryStore;
       return operation(activeStore);
     }
@@ -262,7 +299,7 @@ app.get('/api/v1/dishes', requireAuth(['customer', 'manager']), async (_req, res
 // --- Orders ---
 app.post('/api/v1/orders', requireAuth(['customer']), async (req: AuthenticatedRequest, res, next) => {
   try {
-    const { tableId, tableNumber, partySize, items, paymentMethod } = req.body ?? {};
+    const { tableId, tableNumber, partySize, items, paymentMethod, phone } = req.body ?? {};
     if (!tableId || !items || !Array.isArray(items) || items.length === 0) {
       throw new AppError(400, 'tableId and at least one item are required');
     }
@@ -272,6 +309,8 @@ app.post('/api/v1/orders', requireAuth(['customer']), async (req: AuthenticatedR
     const order = await dbStore.createOrder({
       guestName: user.name,
       email: user.email,
+      // Optional. When supplied, the confirmation also goes out on WhatsApp.
+      ...(typeof phone === 'string' && phone.trim() ? { phone: phone.trim() } : {}),
       tableId,
       tableNumber: tableNumber ?? tableId,
       partySize: Number(partySize) || 1,
@@ -586,6 +625,223 @@ app.post('/api/v1/public/reservation', async (req, res, next) => {
 // --- Admin routes (verify-mail, db-health, user list, table viewer) ---
 app.use('/api/v1/admin', adminRoutes);
 
+/**
+ * Re-classify stored reviews with the real models. Safe to run repeatedly.
+ * Returns how many rows the models actually updated.
+ */
+app.post('/api/v1/feedback/reanalyze', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const limit = Math.min(Number(req.body?.limit) || 50, 200);
+    const result = await feedbackStore.reanalyzeStoredFeedback(limit);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ── Billing: invoices, payments, recipes ─────────────────────────────────────
+// Flow: order -> invoice -> payment request (QR + link) -> mock gateway -> webhook
+//       -> invoice paid, payment saved, inventory deducted, receipt sent.
+
+app.get('/api/v1/invoices', requireAuth(['manager']), async (_req, res, next) => {
+  try {
+    res.json({ success: true, data: await billingStore.listInvoices() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/v1/invoices', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { orderId, email, phone } = req.body ?? {};
+    if (!orderId) throw new AppError(400, 'orderId is required');
+
+    const invoice = await billingStore.createInvoice(orderId, {
+      ...(typeof email === 'string' && email.trim() ? { email: email.trim() } : {}),
+      ...(typeof phone === 'string' && phone.trim() ? { phone: phone.trim() } : {}),
+    });
+    if (!invoice) throw new AppError(404, 'Order not found');
+
+    res.status(201).json({ success: true, data: invoice });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/v1/invoices/:id/payment-request', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const request = await billingStore.createPaymentRequest(req.params.id as string);
+    if (!request) throw new AppError(404, 'Invoice not found');
+    res.json({ success: true, data: request });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/v1/recipes', requireAuth(['manager']), async (_req, res, next) => {
+  try {
+    res.json({ success: true, data: await billingStore.listRecipes() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/v1/recipes', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { dishId, ingredientId, quantityPerServing } = req.body ?? {};
+    if (!dishId || !ingredientId) throw new AppError(400, 'dishId and ingredientId are required');
+    const quantity = Number(quantityPerServing);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      throw new AppError(400, 'quantityPerServing must be a positive number');
+    }
+    res.status(201).json({
+      success: true,
+      data: await billingStore.setRecipeLine({ dishId, ingredientId, quantityPerServing: quantity }),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/v1/recipes/:id', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const removed = await billingStore.deleteRecipeLine(req.params.id as string);
+    if (!removed) throw new AppError(404, 'Recipe line not found');
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Mock payment gateway. Public on purpose — the customer opens this from the QR code
+ * and is not logged in. The unguessable token is what protects it.
+ */
+app.get('/pay/:token', async (req, res, next) => {
+  try {
+    const invoice = await billingStore.getInvoiceByToken(req.params.token as string);
+    if (!invoice) {
+      res.status(404).send('<h1>Payment link not found</h1>');
+      return;
+    }
+
+    const paid = invoice.status === 'paid';
+    const amount = Number(invoice.amount).toFixed(2);
+
+    res.type('html').send(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Pay ${invoice.invoiceNumber}</title>
+<style>
+ body{margin:0;background:#EFF1EE;color:#101418;font-family:system-ui,sans-serif;
+      display:flex;min-height:100vh;align-items:center;justify-content:center;padding:16px}
+ .card{background:#fff;border:1px solid #D8DCD6;border-radius:8px;padding:28px;max-width:380px;width:100%}
+ .lbl{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#3B4149;margin:0}
+ .amt{font-size:40px;font-weight:700;margin:8px 0 4px;font-variant-numeric:tabular-nums}
+ .muted{color:#3B4149;font-size:14px;margin:0}
+ button{width:100%;margin-top:24px;padding:14px;border:0;border-radius:6px;background:#101418;
+        color:#fff;font-size:15px;font-weight:600;cursor:pointer}
+ button:disabled{opacity:.5;cursor:default}
+ .ok{margin-top:20px;padding:12px;border-radius:6px;background:rgba(15,110,92,.08);color:#0F6E5C;font-size:14px}
+ .err{margin-top:20px;padding:12px;border-radius:6px;background:rgba(179,38,30,.08);color:#B3261E;font-size:14px}
+</style></head><body>
+<div class="card">
+  <p class="lbl">Invoice ${invoice.invoiceNumber}</p>
+  <p class="amt">&#8377;${amount}</p>
+  <p class="muted">${invoice.guestName || 'Guest'}</p>
+  ${paid
+    ? '<div class="ok">Already paid. Thank you.</div>'
+    : `<button id="pay">Pay &#8377;${amount}</button><div id="msg"></div>`}
+</div>
+<script>
+ var btn = document.getElementById('pay');
+ if (btn) btn.addEventListener('click', async function () {
+   btn.disabled = true; btn.textContent = 'Processing...';
+   var msg = document.getElementById('msg');
+   try {
+     var r = await fetch('/api/v1/payments/mock-gateway/${req.params.token}', { method: 'POST' });
+     var d = await r.json();
+     if (r.ok) { msg.className = 'ok'; msg.textContent = 'Payment successful. Your receipt is on its way.'; btn.style.display = 'none'; }
+     else { msg.className = 'err'; msg.textContent = d.message || 'Payment failed.'; btn.disabled = false; btn.textContent = 'Try again'; }
+   } catch (e) {
+     msg.className = 'err'; msg.textContent = 'Network error.'; btn.disabled = false; btn.textContent = 'Try again';
+   }
+ });
+</script>
+</body></html>`);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * The mock gateway "charges" the customer and then calls our own webhook exactly the way
+ * a real provider would — same signature, same payload shape — so the webhook path is the
+ * one actually exercised in testing.
+ */
+app.post('/api/v1/payments/mock-gateway/:token', async (req, res, next) => {
+  try {
+    const invoice = await billingStore.getInvoiceByToken(req.params.token as string);
+    if (!invoice) throw new AppError(404, 'Payment link not found');
+    if (invoice.status === 'paid') {
+      res.json({ success: true, data: { status: 'already_paid' } });
+      return;
+    }
+
+    const payload = JSON.stringify({
+      event: 'payment.succeeded',
+      paymentToken: req.params.token as string,
+      providerReference: `mock_${Date.now()}`,
+      method: 'upi',
+    });
+
+    const result = await billingStore.markInvoicePaid({
+      paymentToken: req.params.token as string,
+      providerReference: JSON.parse(payload).providerReference,
+      method: 'upi',
+    });
+
+    if (!result.ok) throw new AppError(404, 'Invoice not found');
+    res.json({ success: true, data: { status: 'paid' } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Real webhook endpoint, for when a genuine gateway replaces the mock one.
+ * Requires a valid HMAC signature in x-payment-signature.
+ */
+app.post('/api/v1/payments/webhook', express.text({ type: '*/*' }), async (req, res, next) => {
+  try {
+    const raw = typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {});
+    const signature = String(req.headers['x-payment-signature'] ?? '');
+
+    if (!billingStore.verifyWebhookSignature(raw, signature)) {
+      throw new AppError(401, 'Invalid webhook signature');
+    }
+
+    const event = JSON.parse(raw);
+    if (event.event !== 'payment.succeeded') {
+      res.json({ success: true, data: { ignored: event.event } });
+      return;
+    }
+
+    const result = await billingStore.markInvoicePaid({
+      paymentToken: event.paymentToken,
+      providerReference: event.providerReference ?? '',
+      method: event.method ?? 'upi',
+    });
+
+    if (!result.ok) throw new AppError(404, 'Invoice not found');
+    res.json({ success: true, data: { processed: !result.alreadyProcessed } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Serve the built React frontend last: the SPA catch-all must not shadow real routes
+// such as /pay/:token, which is a server-rendered page, not part of the React app.
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const distPath = path.resolve(__dirname, '../dist');
@@ -606,6 +862,7 @@ app.listen(PORT, async () => {
     await inventoryStore.initialize();
     await staffStore.initialize();
     await feedbackStore.initialize();
+    await billingStore.initialize();
     await authService.initialize();
     activeStore = dbStore;
     console.log(`Server successfully booted up on port ${PORT} using PostgreSQL`);

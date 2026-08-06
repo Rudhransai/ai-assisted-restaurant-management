@@ -48,7 +48,14 @@ Open `.env` in VS Code and fill in your values:
 
 ```env
 DATABASE_URL=postgres://postgres:yourpassword@localhost:5432/restaurant
-SESSION_SECRET=any_long_random_string_here
+
+# Required. Generate one with the command below — do not reuse the example value.
+JWT_SECRET=paste_a_64_character_hex_string_here
+
+# Required in production. In development it defaults to manager123.
+MANAGER_EMAIL=manager@restaurant.com
+MANAGER_PASSWORD=choose_a_strong_password
+
 MAIL_SMTP_HOST=smtp.gmail.com
 MAIL_SMTP_PORT=587
 MAIL_SMTP_USER=your_gmail@gmail.com
@@ -56,7 +63,21 @@ MAIL_SMTP_PASS=your_gmail_app_password
 MAIL_FROM="Restaurant <your_gmail@gmail.com>"
 ```
 
+Generate `JWT_SECRET`:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+> **Note:** earlier versions of this file listed `SESSION_SECRET`. Nothing in the code reads
+> that variable — the auth service uses `JWT_SECRET`. If your `.env` still has
+> `SESSION_SECRET`, rename it.
+
 > **Gmail App Password**: Go to https://myaccount.google.com/apppasswords, generate a password for "Mail", and paste it into `MAIL_SMTP_PASS`.
+
+> **WhatsApp** is optional for local development. Leave the `WHATSAPP_*` values blank and
+> notifications simply log a "missing credentials" result instead of sending. See
+> `.env.example` for the full list.
 
 ---
 
@@ -119,7 +140,7 @@ restaurant-backend/
 │   ├── app.ts              ← Express backend (API + serves frontend in prod)
 │   ├── config/             ← Database connection
 │   ├── frontend/           ← React components (Customer & Manager dashboards)
-│   ├── integrations/       ← Email sender (nodemailer)
+│   ├── integrations/       ← Email (nodemailer) + WhatsApp (Meta Cloud API)
 │   ├── middleware/         ← Auth, error handling
 │   └── services/           ← DB store, auth service, scheduler
 ├── .env.example            ← Copy this to .env and fill in your values
@@ -137,6 +158,10 @@ restaurant-backend/
 | `password authentication failed` | Check the password in `DATABASE_URL` matches your PostgreSQL user |
 | `relation "users" does not exist` | The DB tables auto-create on boot — make sure the backend started without errors |
 | Emails not sending | Verify `MAIL_SMTP_PASS` is a Gmail App Password (not your Gmail login password) |
+| `JWT_SECRET must be set...` on start | Only thrown when `NODE_ENV=production`. Set `JWT_SECRET` in `.env` |
+| `self signed certificate` from Postgres | Add `DATABASE_SSL_REJECT_UNAUTHORIZED=false` for hosted DBs like Neon or Supabase |
+| WhatsApp says `Missing WHATSAPP_PHONE_NUMBER_ID` | Expected until you fill in the Meta credentials — nothing else breaks |
+| WhatsApp returns OK but nothing arrives | Free-form text only reaches customers who messaged you in the last 24h. Use an approved template |
 | Port 3000 or 5000 already in use | Kill the process using that port: `npx kill-port 3000 5000` |
 
 ---

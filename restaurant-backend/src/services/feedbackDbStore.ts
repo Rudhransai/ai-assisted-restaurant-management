@@ -1,4 +1,9 @@
 import { Pool } from 'pg';
+import {
+  analyzeSentimentWithModel,
+  categorizeReviewWithModel,
+  isHuggingFaceConfigured,
+} from '../integrations/huggingFace';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -165,6 +170,36 @@ export function categorizeReview(text: string): string[] {
     if (keywords.some(kw => lower.includes(kw))) matched.push(category);
   }
   return matched.length > 0 ? matched : ['Food Quality'];
+}
+
+// ── Model-backed classification ──────────────────────────────────────────────
+//
+// Module 5 specifies DistilBERT for sentiment and bart-large-mnli for categorisation.
+// These wrappers use those models when HUGGINGFACE_API_KEY is set and fall back to the
+// keyword classifiers above when it is not, when the API errors, or when it times out.
+// The keyword versions stay in the file precisely so the app never hard-depends on a
+// third-party service being reachable.
+
+export const CATEGORY_LABELS = Object.keys(CATEGORY_KEYWORDS);
+
+export async function classifySentiment(
+  text: string
+): Promise<{ sentiment: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL'; confidence: number; source: 'model' | 'keyword' }> {
+  if (isHuggingFaceConfigured()) {
+    const result = await analyzeSentimentWithModel(text);
+    if (result) return { ...result, source: 'model' };
+  }
+  return { ...analyzeSentiment(text), source: 'keyword' };
+}
+
+export async function classifyCategories(
+  text: string
+): Promise<{ categories: string[]; source: 'model' | 'keyword' }> {
+  if (isHuggingFaceConfigured()) {
+    const result = await categorizeReviewWithModel(text, CATEGORY_LABELS);
+    if (result) return { categories: result, source: 'model' };
+  }
+  return { categories: categorizeReview(text), source: 'keyword' };
 }
 
 // ── Seed data ─────────────────────────────────────────────────────────────────
@@ -372,6 +407,67 @@ export class FeedbackDbStore {
     return r.rows as FeedbackItem[];
   }
 
+  /**
+   * Re-run classification over reviews already stored.
+   *
+   * Needed because the seed reviews — and anything added before a Hugging Face key was
+   * configured — were classified by the keyword fallback. Processed one at a time on
+   * purpose: the free Inference API rate-limits bursts, and a slow correct backfill beats
+   * a fast rejected one.
+   *
+   * `limit` caps a single run so the request cannot hang for thousands of reviews.
+   */
+  async reanalyzeStoredFeedback(limit = 50) {
+    if (!isHuggingFaceConfigured()) {
+      return { updated: 0, skipped: 0, reason: 'HUGGINGFACE_API_KEY is not set' as const };
+    }
+
+    const reviews = await this.pool.query(
+      'SELECT id, review_text AS "reviewText" FROM customer_feedback ORDER BY review_date DESC LIMIT $1',
+      [limit]
+    );
+
+    const categoryRows = await this.pool.query('SELECT id, category_name FROM feedback_categories');
+    const categoryIdByName: Record<string, string> = {};
+    categoryRows.rows.forEach((row: any) => { categoryIdByName[row.category_name] = row.id; });
+
+    let updated = 0;
+    let skipped = 0;
+
+    for (const review of reviews.rows) {
+      const sentimentResult = await classifySentiment(review.reviewText);
+      const categoryResult = await classifyCategories(review.reviewText);
+
+      // If the model was unreachable, leave the existing values alone rather than
+      // overwriting good data with a keyword guess.
+      if (sentimentResult.source !== 'model' && categoryResult.source !== 'model') {
+        skipped += 1;
+        continue;
+      }
+
+      await this.pool.query(
+        'UPDATE customer_feedback SET sentiment = $1, confidence_score = $2 WHERE id = $3',
+        [sentimentResult.sentiment, sentimentResult.confidence, review.id]
+      );
+
+      if (categoryResult.source === 'model') {
+        await this.pool.query('DELETE FROM feedback_category_mapping WHERE feedback_id = $1', [review.id]);
+        for (const name of categoryResult.categories) {
+          const categoryId = categoryIdByName[name];
+          if (!categoryId) continue;
+          await this.pool.query(
+            'INSERT INTO feedback_category_mapping (feedback_id, category_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+            [review.id, categoryId]
+          );
+        }
+      }
+
+      updated += 1;
+    }
+
+    return { updated, skipped };
+  }
+
   async addFeedback(data: {
     customerId?: string;
     customerName?: string;
@@ -400,8 +496,8 @@ export class FeedbackDbStore {
     }
 
     const reviewDate = data.reviewDate ?? new Date().toISOString().split('T')[0];
-    const { sentiment, confidence } = analyzeSentiment(data.reviewText);
-    const categories = categorizeReview(data.reviewText);
+    const { sentiment, confidence } = await classifySentiment(data.reviewText);
+    const { categories } = await classifyCategories(data.reviewText);
 
     await this.pool.query(
       `INSERT INTO customer_feedback (id, customer_id, review_text, rating, source, review_date, sentiment, confidence_score)
