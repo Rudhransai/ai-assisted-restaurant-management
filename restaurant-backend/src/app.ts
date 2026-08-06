@@ -1,5 +1,14 @@
-import dotenv from 'dotenv';
-dotenv.config();
+// MUST be the first import.
+//
+// ES modules evaluate every import fully before any top-level code in this file runs.
+// With `import dotenv` followed by `dotenv.config()`, modules like config/db.ts and
+// services/authService.ts were already evaluated — and had already read process.env —
+// before .env was ever loaded. The result: the pool silently connected to the default
+// database instead of DATABASE_URL, and JWT_SECRET always looked unset.
+//
+// `dotenv/config` runs on import, and imports are evaluated in source order, so putting
+// it first guarantees .env is loaded before anything else reads process.env.
+import 'dotenv/config';
 
 import express from 'express';
 import path from 'path';
