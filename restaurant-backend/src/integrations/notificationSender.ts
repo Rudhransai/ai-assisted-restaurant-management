@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { sendWhatsAppCloud, type WhatsAppTemplate } from './whatsappCloud';
 
 export type NotificationType = 'mail' | 'whatsapp' | 'sms';
 
@@ -7,6 +8,11 @@ export interface SendNotificationInput {
   recipient: string; // email address or phone number, depending on type
   content: string;
   subject?: string;
+  /**
+   * WhatsApp only. Required for business-initiated messages when using the Meta Cloud API
+   * (reminders, confirmations). Ignored by the mail and SMS paths.
+   */
+  template?: WhatsAppTemplate;
 }
 
 export interface SendNotificationResult {
@@ -81,19 +87,38 @@ export async function sendNotification(
       return { ok: false, provider: 'smtp', error: 'Missing MAIL_* environment variables' };
     }
 
+    // The values shipped in .env.example are placeholders, not credentials. Left in place
+    // they make every send attempt a slow, doomed Gmail login. Fail instantly instead.
+    const placeholders = ['your_gmail@gmail.com', 'your_16_char_app_password', 'your_gmail_app_password'];
+    if (placeholders.includes(user) || placeholders.includes(pass)) {
+      return {
+        ok: false,
+        provider: 'smtp',
+        error: 'MAIL_SMTP_USER / MAIL_SMTP_PASS are still the example values. Set real ones in .env.',
+      };
+    }
+
     const port = Number(portRaw);
 
     try {
       // Use Gmail service shorthand when possible for most reliable config
       const isGmail = smtpHost === 'smtp.gmail.com';
+      // Without these, a bad host or wrong password can hang the request for minutes.
+      const timeouts = {
+        connectionTimeout: 8000,
+        greetingTimeout: 8000,
+        socketTimeout: 12000,
+      };
+
       const transportConfig = isGmail
-        ? { service: 'gmail', auth: { user, pass } }
+        ? { service: 'gmail', auth: { user, pass }, ...timeouts }
         : {
             host: smtpHost,
             port,
             secure: port === 465,
             requireTLS: port === 587,
             auth: { user, pass },
+            ...timeouts,
           };
 
       const transporter = nodemailer.createTransport(transportConfig);
@@ -115,6 +140,22 @@ export async function sendNotification(
       console.error('[NotificationSender] mail send failed', err?.message ?? err);
       return { ok: false, provider: 'smtp', error: err?.message ?? String(err) };
     }
+  }
+
+  // ── WHATSAPP (Meta Cloud API — default provider) ───────────────────────────
+  // Set WHATSAPP_PROVIDER=twilio to fall back to the old Twilio path.
+  if (input.type === 'whatsapp' && (env('WHATSAPP_PROVIDER') ?? 'meta') === 'meta') {
+    const result = await sendWhatsAppCloud({
+      to: input.recipient,
+      body: input.content,
+      ...(input.template ? { template: input.template } : {}),
+    });
+    return {
+      ok: result.ok,
+      provider: result.provider,
+      ...(result.messageId ? { messageId: result.messageId } : {}),
+      ...(result.error ? { error: result.error } : {}),
+    };
   }
 
   // ── WHATSAPP / SMS (Twilio) ────────────────────────────────────────────────

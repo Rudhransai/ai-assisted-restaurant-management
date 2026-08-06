@@ -151,9 +151,39 @@ export class RestaurantDbStore {
       )
     `);
 
-    await this.pool.query(`
-      ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS preferred_table_id TEXT DEFAULT ''
-    `);
+    /**
+     * Column migrations.
+     *
+     * CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so a database
+     * created by an older version of this app keeps its old shape and every query that
+     * mentions a newer column fails with "column does not exist" (Postgres 42703).
+     *
+     * ADD COLUMN IF NOT EXISTS is safe to run on every boot: it is a no-op when the column
+     * is already there, so this doubles as the upgrade path for existing installations.
+     */
+    const migrations: Array<[string, string]> = [
+      ['waitlist', "preferred_table_id TEXT DEFAULT ''"],
+      ['waitlist', "email TEXT NOT NULL DEFAULT ''"],
+      ['waitlist', "phone TEXT NOT NULL DEFAULT ''"],
+      ['reservations', "email TEXT NOT NULL DEFAULT ''"],
+      ['reservations', "phone TEXT NOT NULL DEFAULT ''"],
+      ['reservations', 'reminder_sent BOOLEAN DEFAULT FALSE'],
+      ['notifications', "status TEXT NOT NULL DEFAULT 'sent'"],
+      ['notifications', "recipient TEXT NOT NULL DEFAULT ''"],
+      ['orders', "payment_method TEXT NOT NULL DEFAULT 'card'"],
+      ['orders', "status TEXT NOT NULL DEFAULT 'confirmed'"],
+      ['orders', "email TEXT NOT NULL DEFAULT ''"],
+      ['tables', "zone TEXT NOT NULL DEFAULT 'Main Floor'"],
+    ];
+
+    for (const [table, column] of migrations) {
+      try {
+        await this.pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column}`);
+      } catch (err: any) {
+        // One unmigratable column must not stop the server from starting.
+        console.warn(`[Migration] ${table}.${column.split(' ')[0]} skipped: ${err?.message ?? err}`);
+      }
+    }
 
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS dishes (
@@ -273,9 +303,11 @@ export class RestaurantDbStore {
         occupiedTables: tables.rows.filter((t: TableItem) => t.status === 'Occupied').length,
         reservedTables: tables.rows.filter((t: TableItem) => t.status === 'Reserved').length,
         pendingWaitlist: waitlist.rows.filter((w: WaitlistItem) => w.status === 'Waiting').length,
-        occupancyRate: Math.round(
-          (tables.rows.filter((t: TableItem) => t.status === 'Occupied').length / tables.rows.length) * 100
-        ),
+        occupancyRate: tables.rows.length
+          ? Math.round(
+              (tables.rows.filter((t: TableItem) => t.status === 'Occupied').length / tables.rows.length) * 100
+            )
+          : 0,
       },
     };
   }
@@ -350,6 +382,7 @@ export class RestaurantDbStore {
   async createOrder(data: {
     guestName: string;
     email: string;
+    phone?: string;
     tableId: string;
     tableNumber: string;
     partySize: number;
@@ -388,26 +421,20 @@ export class RestaurantDbStore {
       orderId,
     });
 
-    if (data.email) {
-      const result = await sendNotification({
-        type: 'mail',
-        recipient: data.email,
-        content,
-        subject: mailSubject('order_confirmation'),
-      });
-
-      await this.pool.query(
-        'INSERT INTO notifications (id, type, recipient, content, status, created_at) VALUES ($1,$2,$3,$4,$5,$6)',
-        [
-          `n${Date.now()}`,
-          'mail',
-          data.email,
-          content,
-          result.ok ? 'sent' : `failed:${result.error ?? 'unknown'}`,
-          createdAt,
-        ]
-      );
-    }
+    // Also fire-and-forget: the order is already saved, the receipt can arrive late.
+    void this.notifyGuest({
+      guestName: data.guestName,
+      ...(data.email ? { email: data.email } : {}),
+      ...(data.phone ? { phone: data.phone } : {}),
+      content,
+      subject: mailSubject('order_confirmation'),
+      template: {
+        name: process.env.WHATSAPP_TEMPLATE_ORDER || 'order_confirmation',
+        languageCode: process.env.WHATSAPP_TEMPLATE_LANG || 'en',
+        params: [data.guestName, orderId, totalAmount.toFixed(2)],
+      },
+      idSuffix: orderId,
+    }).catch((err) => console.error('[Order] Confirmation could not be sent', err));
 
     return {
       id: orderId,
@@ -452,7 +479,90 @@ export class RestaurantDbStore {
       'INSERT INTO reservations (id, guest_name, party_size, reservation_time, table_id, status, email, phone, reminder_sent) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
       [reservationId, data.guestName, data.partySize, data.time, data.tableId, 'Reserved', data.email, data.phone, false]
     );
+
+    // Confirm the booking straight away. Previously nothing was sent until the reminder,
+    // so a guest had no record that the booking had been taken.
+    //
+    // Deliberately NOT awaited: a slow or misconfigured mail server must never hold up
+    // the booking itself. The send continues in the background and logs its own result.
+    void this.notifyGuest({
+      guestName: data.guestName,
+      email: data.email,
+      phone: data.phone,
+      content: renderRestaurantMailContent({
+        guestName: data.guestName,
+        action: 'reservation_confirmed',
+        time: data.time,
+        partySize: data.partySize,
+      }),
+      subject: mailSubject('reservation_confirmed'),
+      template: {
+        name: process.env.WHATSAPP_TEMPLATE_CONFIRMATION || 'reservation_confirmed',
+        languageCode: process.env.WHATSAPP_TEMPLATE_LANG || 'en',
+        params: [data.guestName, String(data.partySize), data.time],
+      },
+      idSuffix: reservationId,
+    }).catch((err) => console.error('[Reservation] Confirmation could not be sent', err));
+
     return { id: reservationId, ...data, status: 'Reserved' as const, reminderSent: false };
+  }
+
+  /**
+   * Send one guest message over email and WhatsApp, then log what actually happened.
+   *
+   * Both channels are attempted when both contact details exist — a confirmation is worth
+   * duplicating, and a failure on one should not silence the other. Every attempt is written
+   * to `notifications`, so delivery can be checked later.
+   */
+  private async notifyGuest(args: {
+    guestName: string;
+    email?: string;
+    phone?: string;
+    content: string;
+    subject: string;
+    template: { name: string; languageCode: string; params: string[] };
+    idSuffix: string;
+  }) {
+    const attempts: Array<{ channel: 'mail' | 'whatsapp'; recipient: string }> = [];
+    if (args.email) attempts.push({ channel: 'mail', recipient: args.email });
+    if (args.phone) attempts.push({ channel: 'whatsapp', recipient: args.phone });
+
+    for (const attempt of attempts) {
+      let result;
+      try {
+        result =
+          attempt.channel === 'mail'
+            ? await sendNotification({
+                type: 'mail',
+                recipient: attempt.recipient,
+                content: args.content,
+                subject: args.subject,
+              })
+            : await sendNotification({
+                type: 'whatsapp',
+                recipient: attempt.recipient,
+                content: args.content,
+                template: args.template,
+              });
+      } catch (err: any) {
+        result = { ok: false, provider: attempt.channel, error: err?.message ?? String(err) };
+      }
+
+      // A failed message must never stop the booking itself, so errors are logged, not thrown.
+      await this.pool
+        .query(
+          'INSERT INTO notifications (id, type, recipient, content, status, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+          [
+            `n${Date.now()}-${attempt.channel}-${args.idSuffix}`,
+            attempt.channel,
+            attempt.recipient,
+            args.content,
+            result.ok ? 'sent' : `failed:${result.error ?? 'unknown'}`,
+            new Date().toISOString(),
+          ]
+        )
+        .catch((err) => console.error('[Notify] Could not log notification', err));
+    }
   }
 
   async createWaitlistEntry(data: {
@@ -652,9 +762,15 @@ export class RestaurantDbStore {
   }
 
   async assignWaitlistEntry(id: string) {
+    // The party size must fit the table. Previously any free table was picked, so a party
+    // of eight could be seated at a two-top. Smallest sufficient table wins, to avoid
+    // burning a large table on a small party.
+    const partyResult = await this.pool.query('SELECT party_size FROM waitlist WHERE id = $1', [id]);
+    const partySize = Number(partyResult.rows[0]?.party_size) || 1;
+
     const availableTable = await this.pool.query(
-      'SELECT id, table_number AS "tableNumber", capacity, zone, status FROM tables WHERE status = $1 ORDER BY id LIMIT 1',
-      ['Available']
+      'SELECT id, table_number AS "tableNumber", capacity, zone, status FROM tables WHERE status = $1 AND capacity >= $2 ORDER BY capacity, id LIMIT 1',
+      ['Available', partySize]
     );
     if ((availableTable.rows[0]?.id ?? null) == null) return null;
 
@@ -701,35 +817,60 @@ export class RestaurantDbStore {
       ['Reserved']
     );
 
-    for (const reservation of pending.rows as ReservationItem[]) {
+    // Only remind guests whose reservation is coming up soon. Without this window every
+    // future booking is reminded the moment it is created, which defeats the purpose.
+    const leadMinutes = Number(process.env.REMINDER_LEAD_MINUTES) || 120;
+    const now = Date.now();
+    const windowEnd = now + leadMinutes * 60 * 1000;
+
+    const due = (pending.rows as ReservationItem[]).filter((reservation) => {
+      const at = new Date(reservation.time).getTime();
+      if (Number.isNaN(at)) {
+        // reservation_time is stored as free-form TEXT, so unparseable values are possible.
+        console.warn(`[Reminders] Skipping ${reservation.id}: unparseable time "${reservation.time}"`);
+        return false;
+      }
+      return at >= now && at <= windowEnd;
+    });
+
+    let sentCount = 0;
+
+    for (const reservation of due) {
       const content = renderRestaurantMailContent({
         guestName: reservation.guestName,
         action: 'reservation_reminder',
         time: reservation.time,
       });
 
-      // Send via mail when possible; fall back to WhatsApp if mail fails or email is empty
-      let finalResult = await sendNotification({
-        type: 'mail',
-        recipient: reservation.email,
-        content,
-      });
+      // Send via mail when possible; fall back to WhatsApp if mail fails or email is empty.
+      let channel: 'mail' | 'whatsapp' = 'mail';
+      let recipient = reservation.email;
 
-      if ((!finalResult.ok || !reservation.email) && reservation.phone) {
+      let finalResult = reservation.email
+        ? await sendNotification({ type: 'mail', recipient: reservation.email, content })
+        : { ok: false, provider: 'none', error: 'No email on file' };
+
+      if (!finalResult.ok && reservation.phone) {
+        channel = 'whatsapp';
+        recipient = reservation.phone;
         finalResult = await sendNotification({
           type: 'whatsapp',
           recipient: reservation.phone,
           content,
+          template: {
+            name: process.env.WHATSAPP_TEMPLATE_REMINDER || 'reservation_reminder',
+            languageCode: process.env.WHATSAPP_TEMPLATE_LANG || 'en',
+            params: [reservation.guestName, reservation.time],
+          },
         });
       }
-
 
       await this.pool.query(
         'INSERT INTO notifications (id, type, recipient, content, status, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
         [
           `n${Date.now()}-${reservation.id}`,
-          finalResult.ok ? 'mail' : 'whatsapp',
-          finalResult.ok ? reservation.email : reservation.phone,
+          channel,
+          recipient,
           content,
           finalResult.ok ? 'sent' : `failed:${finalResult.error ?? 'unknown'}`,
           new Date().toISOString(),
@@ -738,9 +879,10 @@ export class RestaurantDbStore {
 
       if (finalResult.ok) {
         await this.pool.query('UPDATE reservations SET reminder_sent = TRUE WHERE id = $1', [reservation.id]);
+        sentCount += 1;
       }
     }
 
-    return pending.rows.length;
+    return sentCount;
   }
 }
