@@ -25,7 +25,7 @@ export function Register() {
       }
 
       saveAuth(payload.data.token, payload.data.user);
-      setStatus({ kind: 'ok', message: 'Account created! Redirecting…' });
+      setStatus({ kind: 'ok', message: 'Account created. Taking you in…' });
       setTimeout(() => redirectForRole('customer'), 800);
     } catch (err: any) {
       setStatus({ kind: 'error', message: err?.message ?? String(err) });
@@ -34,72 +34,78 @@ export function Register() {
     }
   };
 
+  const field = 'mt-1.5 w-full rounded-md border border-line bg-white px-3 py-2.5';
+
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.18),_transparent_35%),linear-gradient(135deg,_#fffaf2_0%,_#f8fafc_100%)] p-4 md:p-10">
-      <div className="mx-auto max-w-md">
-        <h1 className="text-3xl font-semibold text-slate-900">Create account</h1>
-        <p className="mt-2 text-sm text-slate-600">Register to select a table and get email alerts when it becomes free.</p>
+    <div className="flex min-h-screen flex-col bg-paper">
+      <header className="border-b border-ink bg-ink px-4 py-4 md:px-8">
+        <p className="eyebrow text-white/55">Restaurant</p>
+        <p className="mt-0.5 font-display text-lg font-bold text-white">Floor &amp; Service</p>
+      </header>
 
-        <form onSubmit={submit} className="mt-6 rounded-2xl border border-slate-200 bg-white/90 p-5 shadow-sm">
-          <div className="grid gap-3">
-            <input
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-2.5"
-              placeholder="Full name"
-              required
-            />
-            <input
-              value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-2.5"
-              placeholder="Email"
-              type="email"
-              required
-            />
-            <input
-              value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-2.5"
-              placeholder="Password"
-              type="password"
-              minLength={6}
-              required
-            />
-            <input
-              value={form.phone}
-              onChange={(e) => setForm({ ...form, phone: e.target.value })}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-2.5"
-              placeholder="Phone (optional)"
-            />
-          </div>
+      <main className="flex flex-1 items-center justify-center px-4 py-10">
+        <div className="w-full max-w-sm">
+          <h1 className="font-display text-3xl font-bold">Create account</h1>
+          <p className="mt-1.5 text-sm text-ink-soft">
+            Sign up to reserve a table and get a message the moment one is free.
+          </p>
 
-          {status.kind !== 'idle' && (
-            <div
-              className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
-                status.kind === 'ok' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-800'
-              }`}
-            >
-              {status.message}
+          <form onSubmit={submit} className="mt-6 rounded-lg border border-line bg-white p-5">
+            <div className="grid gap-4">
+              <div>
+                <label htmlFor="name" className="eyebrow">Full name</label>
+                <input id="name" value={form.name} required autoComplete="name"
+                  onChange={(e) => setForm({ ...form, name: e.target.value })} className={field} />
+              </div>
+
+              <div>
+                <label htmlFor="email" className="eyebrow">Email</label>
+                <input id="email" value={form.email} type="email" required autoComplete="email"
+                  onChange={(e) => setForm({ ...form, email: e.target.value })} className={field} />
+              </div>
+
+              <div>
+                <label htmlFor="password" className="eyebrow">Password</label>
+                <input id="password" value={form.password} type="password" minLength={6} required
+                  autoComplete="new-password"
+                  onChange={(e) => setForm({ ...form, password: e.target.value })} className={field} />
+                <p className="mt-1 text-xs text-ink-soft">At least 6 characters.</p>
+              </div>
+
+              <div>
+                <label htmlFor="phone" className="eyebrow">
+                  Phone <span className="font-normal normal-case tracking-normal text-ink-soft">(optional)</span>
+                </label>
+                <input id="phone" value={form.phone} type="tel" autoComplete="tel"
+                  onChange={(e) => setForm({ ...form, phone: e.target.value })} className={field} />
+                {/* Worth asking for: alerts go out on WhatsApp as well as email. */}
+                <p className="mt-1 text-xs text-ink-soft">For WhatsApp alerts when your table is ready.</p>
+              </div>
             </div>
-          )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="mt-5 w-full rounded-xl bg-amber-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-800 disabled:opacity-60"
-          >
-            {loading ? 'Creating account…' : 'Create account'}
-          </button>
-        </form>
+            {status.kind !== 'idle' && (
+              <p role={status.kind === 'error' ? 'alert' : 'status'}
+                className={`mt-5 rounded-md border px-3 py-2.5 text-sm ${
+                  status.kind === 'ok'
+                    ? 'border-free/30 bg-free/5 text-free'
+                    : 'border-busy/30 bg-busy/5 text-busy'
+                }`}>
+                {status.message}
+              </p>
+            )}
 
-        <p className="mt-4 text-center text-sm text-slate-600">
-          Already have an account?{' '}
-          <a href="/login" className="font-medium text-amber-800 hover:underline">
-            Sign in
-          </a>
-        </p>
-      </div>
+            <button type="submit" disabled={loading}
+              className="mt-5 w-full rounded-md bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-ink-soft disabled:opacity-55">
+              {loading ? 'Creating account…' : 'Create account'}
+            </button>
+          </form>
+
+          <p className="mt-4 text-center text-sm text-ink-soft">
+            Already have an account?{' '}
+            <a href="/login" className="font-semibold text-ink underline underline-offset-2">Sign in</a>
+          </p>
+        </div>
+      </main>
     </div>
   );
 }
