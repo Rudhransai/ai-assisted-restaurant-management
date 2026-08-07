@@ -10,7 +10,12 @@
  * Get a free token at https://huggingface.co/settings/tokens (read access is enough).
  */
 
-const HF_BASE = 'https://api-inference.huggingface.co/models';
+/**
+ * Hugging Face retired `api-inference.huggingface.co` — it no longer resolves at all,
+ * so calls fail with ENOTFOUND rather than a helpful HTTP error. The replacement is the
+ * router endpoint below. Overridable in case they move it again.
+ */
+const HF_BASE = process.env.HF_API_BASE || 'https://router.huggingface.co/hf-inference/models';
 
 const SENTIMENT_MODEL =
   process.env.HF_SENTIMENT_MODEL || 'distilbert-base-uncased-finetuned-sst-2-english';

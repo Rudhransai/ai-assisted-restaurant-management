@@ -163,6 +163,7 @@ export class RestaurantDbStore {
      */
     const migrations: Array<[string, string]> = [
       ['waitlist', "preferred_table_id TEXT DEFAULT ''"],
+      ['table_watch', "phone TEXT NOT NULL DEFAULT ''"],
       ['waitlist', "email TEXT NOT NULL DEFAULT ''"],
       ['waitlist', "phone TEXT NOT NULL DEFAULT ''"],
       ['reservations', "email TEXT NOT NULL DEFAULT ''"],
@@ -625,8 +626,8 @@ export class RestaurantDbStore {
     const createdAt = new Date().toISOString();
 
     await this.pool.query(
-      'INSERT INTO table_watch (id, user_id, table_id, email, guest_name, party_size, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-      [watchId, data.userId, data.tableId, data.email, data.guestName, data.partySize, 'Waiting', createdAt]
+      'INSERT INTO table_watch (id, user_id, table_id, email, phone, guest_name, party_size, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+      [watchId, data.userId, data.tableId, data.email, (data as any).phone ?? '', data.guestName, data.partySize, 'Waiting', createdAt]
     );
 
     if (table.status === 'Available') {
@@ -662,7 +663,7 @@ export class RestaurantDbStore {
 
   async notifyTableWatchers(tableId: string, tableNumber?: string) {
     const watchers = await this.pool.query(
-      `SELECT id, user_id AS "userId", table_id AS "tableId", email, guest_name AS "guestName",
+      `SELECT id, user_id AS "userId", table_id AS "tableId", email, phone, guest_name AS "guestName",
               party_size AS "partySize", status, created_at AS "createdAt"
        FROM table_watch
        WHERE table_id = $1 AND status = 'Waiting'`,
@@ -687,28 +688,26 @@ export class RestaurantDbStore {
         tableNumber: resolvedTableNumber,
       });
 
-      const result = await sendNotification({
-        type: 'mail',
-        recipient: watch.email,
+      // "Your table is free" is time-critical, so it goes out on both channels rather
+      // than only email. Previously WhatsApp was never used here at all.
+      await this.notifyGuest({
+        guestName: watch.guestName,
+        ...(watch.email ? { email: watch.email } : {}),
+        ...((watch as any).phone ? { phone: (watch as any).phone as string } : {}),
         content,
+        subject: mailSubject('table_available'),
+        template: {
+          name: process.env.WHATSAPP_TEMPLATE_TABLE_READY || 'table_ready',
+          languageCode: process.env.WHATSAPP_TEMPLATE_LANG || 'en',
+          params: [watch.guestName, String(resolvedTableNumber)],
+        },
+        idSuffix: watch.id,
       });
 
-      await this.pool.query(
-        'INSERT INTO notifications (id, type, recipient, content, status, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
-        [
-          `n${Date.now()}-${watch.id}`,
-          'mail',
-          watch.email,
-          content,
-          result.ok ? 'sent' : `failed:${result.error ?? 'unknown'}`,
-          new Date().toISOString(),
-        ]
-      );
-
-      if (result.ok) {
-        await this.pool.query('UPDATE table_watch SET status = $1 WHERE id = $2', ['Notified', watch.id]);
-        notifiedCount += 1;
-      }
+      // Marked as notified regardless of delivery: the table is free now, and a stuck
+      // "Waiting" row would silently re-notify on every status change.
+      await this.pool.query('UPDATE table_watch SET status = $1 WHERE id = $2', ['Notified', watch.id]);
+      notifiedCount += 1;
     }
 
     return notifiedCount;
@@ -725,38 +724,27 @@ export class RestaurantDbStore {
 
     if (!entry) return null;
 
-    const notificationId = `n${Date.now()}`;
     const content = renderRestaurantMailContent({
       guestName: entry.guestName,
       action: 'waitlist_notified',
     });
 
-    // Send by email when available; otherwise fall back to WhatsApp.
-    const hasEmail = Boolean(entry.email && entry.email.trim());
-
-    const result = hasEmail
-      ? await sendNotification({
-          type: 'mail',
-          recipient: entry.email,
-          content,
-        })
-      : await sendNotification({
-          type: 'whatsapp',
-          recipient: entry.phone,
-          content,
-        });
-
-    await this.pool.query(
-      'INSERT INTO notifications (id, type, recipient, content, status, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
-      [
-        notificationId,
-        hasEmail ? 'mail' : 'whatsapp',
-        hasEmail ? entry.email : entry.phone,
-        content,
-        result.ok ? 'sent' : `failed:${result.error ?? 'unknown'}`,
-        new Date().toISOString(),
-      ]
-    );
+    // Both channels, not one or the other. A waiting guest is standing in the doorway —
+    // email alone is the wrong bet, and the old code only reached WhatsApp when the guest
+    // happened to have no email address, and then without a template so Meta dropped it.
+    await this.notifyGuest({
+      guestName: entry.guestName,
+      ...(entry.email ? { email: entry.email } : {}),
+      ...(entry.phone ? { phone: entry.phone } : {}),
+      content,
+      subject: mailSubject('waitlist_notified'),
+      template: {
+        name: process.env.WHATSAPP_TEMPLATE_TABLE_READY || 'table_ready',
+        languageCode: process.env.WHATSAPP_TEMPLATE_LANG || 'en',
+        params: [entry.guestName, 'your table'],
+      },
+      idSuffix: entry.id,
+    });
 
     return entry;
   }

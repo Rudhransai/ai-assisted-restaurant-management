@@ -2398,7 +2398,7 @@ export function Dashboard() {
           )}
 
           {activeTab === 'billing' && (
-            <Billing orders={orders} SectionCard={SectionCard} />
+            <Billing SectionCard={SectionCard} />
           )}
 
         </main>

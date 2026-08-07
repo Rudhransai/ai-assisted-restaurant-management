@@ -51,12 +51,14 @@ const statusTone: Record<string, string> = {
 const money = (n: number) => `₹${Number(n).toFixed(2)}`;
 
 export function Billing({
-  orders,
   SectionCard,
 }: {
-  orders: OrderLite[];
   SectionCard: React.ComponentType<{ title: string; sub?: string; children: React.ReactNode; action?: React.ReactNode }>;
 }) {
+  // Orders are fetched here rather than passed in. The dashboard only loads them when the
+  // Orders tab is opened, so relying on that prop left this screen empty — and worse,
+  // showing "every order already has an invoice" when the real answer was "no orders loaded".
+  const [orders, setOrders] = useState<OrderLite[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [dishes, setDishes] = useState<Dish[]>([]);
@@ -70,19 +72,21 @@ export function Billing({
 
   const load = useCallback(async () => {
     try {
-      const [invRes, recRes, dishRes, ingRes] = await Promise.all([
+      const [invRes, recRes, dishRes, ingRes, ordRes] = await Promise.all([
         authFetch('/api/v1/invoices'),
         authFetch('/api/v1/recipes'),
         authFetch('/api/v1/dishes'),
         authFetch('/api/v1/inventory/ingredients'),
+        authFetch('/api/v1/orders'),
       ]);
-      const [inv, rec, dish, ing] = await Promise.all([
-        invRes.json(), recRes.json(), dishRes.json(), ingRes.json(),
+      const [inv, rec, dish, ing, ord] = await Promise.all([
+        invRes.json(), recRes.json(), dishRes.json(), ingRes.json(), ordRes.json(),
       ]);
       setInvoices(inv?.data ?? []);
       setRecipes(rec?.data ?? []);
       setDishes(dish?.data ?? []);
       setIngredients(ing?.data ?? []);
+      setOrders(ord?.data ?? ord ?? []);
     } catch (err: any) {
       setMessage({ kind: 'error', text: err?.message ?? 'Could not load billing data' });
     }
@@ -242,7 +246,11 @@ export function Billing({
           </button>
         </form>
         {uninvoiced.length === 0 && (
-          <p className="mt-3 text-sm text-ink-soft">Every order already has an invoice.</p>
+          <p className="mt-3 text-sm text-ink-soft">
+            {orders.length === 0
+              ? 'No orders found yet. Orders are created from the customer side.'
+              : 'Every order already has an invoice.'}
+          </p>
         )}
       </SectionCard>
 

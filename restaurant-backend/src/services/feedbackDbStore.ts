@@ -4,6 +4,11 @@ import {
   categorizeReviewWithModel,
   isHuggingFaceConfigured,
 } from '../integrations/huggingFace';
+import {
+  analyzeSentimentLocally,
+  categorizeReviewLocally,
+  isLocalModelsEnabled,
+} from '../integrations/localModels';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -185,6 +190,11 @@ export const CATEGORY_LABELS = Object.keys(CATEGORY_KEYWORDS);
 export async function classifySentiment(
   text: string
 ): Promise<{ sentiment: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL'; confidence: number; source: 'model' | 'keyword' }> {
+  // Local first when enabled: the hosted API no longer serves these models at all.
+  if (isLocalModelsEnabled()) {
+    const result = await analyzeSentimentLocally(text);
+    if (result) return { ...result, source: 'model' };
+  }
   if (isHuggingFaceConfigured()) {
     const result = await analyzeSentimentWithModel(text);
     if (result) return { ...result, source: 'model' };
@@ -195,6 +205,10 @@ export async function classifySentiment(
 export async function classifyCategories(
   text: string
 ): Promise<{ categories: string[]; source: 'model' | 'keyword' }> {
+  if (isLocalModelsEnabled()) {
+    const result = await categorizeReviewLocally(text, CATEGORY_LABELS);
+    if (result) return { categories: result, source: 'model' };
+  }
   if (isHuggingFaceConfigured()) {
     const result = await categorizeReviewWithModel(text, CATEGORY_LABELS);
     if (result) return { categories: result, source: 'model' };
@@ -418,8 +432,12 @@ export class FeedbackDbStore {
    * `limit` caps a single run so the request cannot hang for thousands of reviews.
    */
   async reanalyzeStoredFeedback(limit = 50) {
-    if (!isHuggingFaceConfigured()) {
-      return { updated: 0, skipped: 0, reason: 'HUGGINGFACE_API_KEY is not set' as const };
+    if (!isLocalModelsEnabled() && !isHuggingFaceConfigured()) {
+      return {
+        updated: 0,
+        skipped: 0,
+        reason: 'No model configured. Set AI_MODE=local (recommended) or HUGGINGFACE_API_KEY.' as const,
+      };
     }
 
     const reviews = await this.pool.query(
