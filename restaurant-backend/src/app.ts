@@ -28,6 +28,8 @@ import { createAuthMiddleware } from './middleware/authMiddleware';
 import type { AuthenticatedRequest } from './middleware/authMiddleware';
 import { AppError } from './middleware/errorHandler';
 import { adminRoutes } from './routes/adminRoutes';
+import { rateLimit } from './middleware/rateLimit';
+import { applyForeignKeys } from './config/foreignKeys';
 
 interface RestaurantStoreLike {
   getSnapshot(): Promise<unknown> | unknown;
@@ -97,7 +99,12 @@ app.get('/api/v1/health', (_req, res) => {
 });
 
 // --- Auth routes ---
-app.post('/api/v1/auth/register', async (req, res, next) => {
+// Without a limit, nothing stops a script from trying passwords all day. bcrypt makes
+// each attempt slow but not slow enough — cap attempts per IP per window instead.
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, name: 'login' });
+const registerLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 20, name: 'register' });
+
+app.post('/api/v1/auth/register', registerLimiter, async (req, res, next) => {
   try {
     const { email, password, name, phone } = req.body ?? {};
     const result = await authService.registerCustomer({ email, password, name, phone });
@@ -107,7 +114,7 @@ app.post('/api/v1/auth/register', async (req, res, next) => {
   }
 });
 
-app.post('/api/v1/auth/login', async (req, res, next) => {
+app.post('/api/v1/auth/login', loginLimiter, async (req, res, next) => {
   try {
     const { email, password, role } = req.body ?? {};
     if (!email || !password) {
@@ -864,6 +871,8 @@ app.listen(PORT, async () => {
     await feedbackStore.initialize();
     await billingStore.initialize();
     await authService.initialize();
+    // After every store has created its tables — the constraints cross store boundaries.
+    await applyForeignKeys(pool);
     activeStore = dbStore;
     console.log(`Server successfully booted up on port ${PORT} using PostgreSQL`);
 

@@ -505,14 +505,19 @@ export class InventoryDbStore {
       FROM reservations
     `);
 
-    // Peak reservation time
-    const peakTimeRes = await this.pool.query(`
-      SELECT reservation_time AS time, COUNT(*)::int AS count
-      FROM reservations
-      GROUP BY reservation_time
-      ORDER BY count DESC
-      LIMIT 1
-    `);
+    // Peak reservation time, bucketed by hour of day. reservation_time now holds ISO
+    // timestamps (legacy rows may still be bare "19:30" text), so grouping by the raw
+    // value would make every reservation its own bucket. Bucketing happens here in JS
+    // because Postgres has no safe cast for the legacy free-form values.
+    const timesRes = await this.pool.query('SELECT reservation_time AS time FROM reservations');
+    const hourCounts = new Map<number, number>();
+    for (const row of timesRes.rows as Array<{ time: string }>) {
+      const parsed = new Date(row.time);
+      const legacy = /^([01]?\d|2[0-3]):[0-5]\d$/.exec(row.time ?? '');
+      const hour = !Number.isNaN(parsed.getTime()) ? parsed.getHours() : legacy ? Number(legacy[1]) : null;
+      if (hour !== null) hourCounts.set(hour, (hourCounts.get(hour) ?? 0) + 1);
+    }
+    const peakHour = [...hourCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
 
     return {
       totals,
@@ -523,7 +528,7 @@ export class InventoryDbStore {
       dailyTrend: dailyTrendRes.rows,
       zoneRevenue: zoneRevenueRes.rows,
       reservationAnalytics: reservationAnalyticsRes.rows[0] ?? {},
-      peakTime: peakTimeRes.rows[0]?.time ?? 'N/A',
+      peakTime: peakHour !== undefined ? `${String(peakHour).padStart(2, '0')}:00` : 'N/A',
     };
   }
 }

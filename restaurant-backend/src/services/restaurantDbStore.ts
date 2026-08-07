@@ -1,6 +1,8 @@
 import { Pool } from 'pg';
 import { sendNotification } from '../integrations/notificationSender';
 import { renderRestaurantMailContent, mailSubject } from '../integrations/mailTemplate';
+import { parseReservationTime, formatReservationTime } from './reservationTime';
+import { AppError } from '../middleware/errorHandler';
 
 export type TableStatus = 'Available' | 'Occupied' | 'Reserved';
 
@@ -264,11 +266,16 @@ export class RestaurantDbStore {
 
     const reservationCount = await this.pool.query('SELECT COUNT(*)::int AS count FROM reservations');
     if ((reservationCount.rows[0]?.count ?? 0) === 0) {
-      await this.pool.query(`
-        INSERT INTO reservations (id, guest_name, party_size, reservation_time, table_id, status, email, phone, reminder_sent) VALUES
-        ('r1','Sharma',2,'19:30','M6','Reserved','sharma@example.com','555-0123',FALSE),
-        ('r2','Verma',4,'20:00','M2','Reserved','verma@example.com','555-0456',FALSE)
-      `);
+      // Seed times must be real timestamps, not bare "19:30" — the reminder scheduler
+      // can only act on values it can compare with the clock.
+      const seed1 = parseReservationTime('19:30')!.toISOString();
+      const seed2 = parseReservationTime('20:00')!.toISOString();
+      await this.pool.query(
+        `INSERT INTO reservations (id, guest_name, party_size, reservation_time, table_id, status, email, phone, reminder_sent) VALUES
+         ('r1','Sharma',2,$1,'M6','Reserved','sharma@example.com','555-0123',FALSE),
+         ('r2','Verma',4,$2,'M2','Reserved','verma@example.com','555-0456',FALSE)`,
+        [seed1, seed2]
+      );
     }
 
     const waitlistCount = await this.pool.query('SELECT COUNT(*)::int AS count FROM waitlist');
@@ -476,9 +483,20 @@ export class RestaurantDbStore {
     phone: string;
   }) {
     const reservationId = `r${Date.now()}`;
+
+    // Normalise to ISO 8601 before storing. Accepts "19:30" (next occurrence) or any
+    // full date-time; anything unparseable is rejected here instead of becoming a row
+    // the reminder scheduler can never act on.
+    const reservationAt = parseReservationTime(data.time);
+    if (!reservationAt) {
+      throw new AppError(400, `Could not understand reservation time "${data.time}". Use HH:MM or a full date and time.`);
+    }
+    const storedTime = reservationAt.toISOString();
+    const displayTime = formatReservationTime(storedTime);
+
     await this.pool.query(
       'INSERT INTO reservations (id, guest_name, party_size, reservation_time, table_id, status, email, phone, reminder_sent) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-      [reservationId, data.guestName, data.partySize, data.time, data.tableId, 'Reserved', data.email, data.phone, false]
+      [reservationId, data.guestName, data.partySize, storedTime, data.tableId, 'Reserved', data.email, data.phone, false]
     );
 
     // Confirm the booking straight away. Previously nothing was sent until the reminder,
@@ -493,19 +511,19 @@ export class RestaurantDbStore {
       content: renderRestaurantMailContent({
         guestName: data.guestName,
         action: 'reservation_confirmed',
-        time: data.time,
+        time: displayTime,
         partySize: data.partySize,
       }),
       subject: mailSubject('reservation_confirmed'),
       template: {
         name: process.env.WHATSAPP_TEMPLATE_CONFIRMATION || 'reservation_confirmed',
         languageCode: process.env.WHATSAPP_TEMPLATE_LANG || 'en',
-        params: [data.guestName, String(data.partySize), data.time],
+        params: [data.guestName, String(data.partySize), displayTime],
       },
       idSuffix: reservationId,
     }).catch((err) => console.error('[Reservation] Confirmation could not be sent', err));
 
-    return { id: reservationId, ...data, status: 'Reserved' as const, reminderSent: false };
+    return { id: reservationId, ...data, time: storedTime, status: 'Reserved' as const, reminderSent: false };
   }
 
   /**
@@ -824,10 +842,11 @@ export class RestaurantDbStore {
     let sentCount = 0;
 
     for (const reservation of due) {
+      const reminderTime = formatReservationTime(reservation.time);
       const content = renderRestaurantMailContent({
         guestName: reservation.guestName,
         action: 'reservation_reminder',
-        time: reservation.time,
+        time: reminderTime,
       });
 
       // Send via mail when possible; fall back to WhatsApp if mail fails or email is empty.
@@ -848,7 +867,7 @@ export class RestaurantDbStore {
           template: {
             name: process.env.WHATSAPP_TEMPLATE_REMINDER || 'reservation_reminder',
             languageCode: process.env.WHATSAPP_TEMPLATE_LANG || 'en',
-            params: [reservation.guestName, reservation.time],
+            params: [reservation.guestName, reminderTime],
           },
         });
       }

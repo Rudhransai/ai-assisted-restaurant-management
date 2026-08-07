@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { authFetch, clearAuth } from './auth';
+import { formatReservationTime } from '../services/reservationTime';
 import { Billing } from './Billing';
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -641,7 +642,7 @@ export function Dashboard() {
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
               <input value={reservationForm.guestName} onChange={e => setReservationForm({ ...reservationForm, guestName: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5 lg:col-span-2" placeholder="Guest name" required />
               <input value={reservationForm.partySize} onChange={e => setReservationForm({ ...reservationForm, partySize: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5" placeholder="Party size" type="number" min="1" />
-              <input value={reservationForm.time} onChange={e => setReservationForm({ ...reservationForm, time: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5" placeholder="Time (HH:MM)" />
+              <input value={reservationForm.time} onChange={e => setReservationForm({ ...reservationForm, time: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5" placeholder="Time (HH:MM = next occurrence)" />
               <input value={reservationForm.phone} onChange={e => setReservationForm({ ...reservationForm, phone: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5" placeholder="Phone" />
               <input value={reservationForm.email} onChange={e => setReservationForm({ ...reservationForm, email: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5" placeholder="Email (for reminder)" />
             </div>
@@ -735,7 +736,7 @@ export function Dashboard() {
                       <tr key={r.id} className="hover:bg-slate-50">
                         <td className="p-4 font-semibold text-slate-800">{r.guestName}</td>
                         <td className="p-4">{r.partySize} guests</td>
-                        <td className="p-4">{r.time}</td>
+                        <td className="p-4">{formatReservationTime(r.time)}</td>
                         <td className="p-4 font-mono">{r.tableId}</td>
                         <td className="p-4 text-slate-500">{r.phone}</td>
                         <td className="p-4"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${r.status === 'No-show' ? 'bg-rose-100 text-rose-800' : r.status === 'Seated' ? 'bg-emerald-100 text-emerald-800' : 'bg-sky-100 text-sky-800'}`}>{r.status}</span></td>
