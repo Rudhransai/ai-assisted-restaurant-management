@@ -952,18 +952,18 @@ export class RestaurantDbStore {
         cancelUrl: `${base}/reserve/confirm?id=${reservation.id}&status=cancelled`,
       });
 
-      // Send via mail when possible; fall back to WhatsApp if mail fails or email is empty.
-      let channel: 'mail' | 'whatsapp' = 'mail';
-      let recipient = reservation.email;
+      // Send on BOTH channels the guest gave us — a reminder on email and WhatsApp
+      // matches the confirmation behaviour, and a failure on one never silences the
+      // other. Each attempt is logged separately so delivery can be audited per channel.
+      const attempts: Array<{ channel: 'mail' | 'whatsapp'; recipient: string; ok: boolean; error?: string }> = [];
 
-      let finalResult = reservation.email
-        ? await sendNotification({ type: 'mail', recipient: reservation.email, content })
-        : { ok: false, provider: 'none', error: 'No email on file' };
+      if (reservation.email) {
+        const mailResult = await sendNotification({ type: 'mail', recipient: reservation.email, content });
+        attempts.push({ channel: 'mail', recipient: reservation.email, ok: mailResult.ok, ...(mailResult.error ? { error: mailResult.error } : {}) });
+      }
 
-      if (!finalResult.ok && reservation.phone) {
-        channel = 'whatsapp';
-        recipient = reservation.phone;
-        finalResult = await sendNotification({
+      if (reservation.phone) {
+        const waResult = await sendNotification({
           type: 'whatsapp',
           recipient: reservation.phone,
           content,
@@ -973,21 +973,25 @@ export class RestaurantDbStore {
             params: [reservation.guestName, reminderTime],
           },
         });
+        attempts.push({ channel: 'whatsapp', recipient: reservation.phone, ok: waResult.ok, ...(waResult.error ? { error: waResult.error } : {}) });
       }
 
-      await this.pool.query(
-        'INSERT INTO notifications (id, type, recipient, content, status, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
-        [
-          `n${Date.now()}-${reservation.id}`,
-          channel,
-          recipient,
-          content,
-          finalResult.ok ? 'sent' : `failed:${finalResult.error ?? 'unknown'}`,
-          new Date().toISOString(),
-        ]
-      );
+      for (const attempt of attempts) {
+        await this.pool.query(
+          'INSERT INTO notifications (id, type, recipient, content, status, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+          [
+            `n${Date.now()}-${reservation.id}-${attempt.channel}`,
+            attempt.channel,
+            attempt.recipient,
+            content,
+            attempt.ok ? 'sent' : `failed:${attempt.error ?? 'unknown'}`,
+            new Date().toISOString(),
+          ]
+        );
+      }
 
-      if (finalResult.ok) {
+      // The guest is considered reminded when ANY channel got through.
+      if (attempts.some((a) => a.ok)) {
         await this.pool.query('UPDATE reservations SET reminder_sent = TRUE WHERE id = $1', [reservation.id]);
         sentCount += 1;
       }
