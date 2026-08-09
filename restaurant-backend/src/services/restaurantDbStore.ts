@@ -173,6 +173,7 @@ export class RestaurantDbStore {
       ['reservations', "email TEXT NOT NULL DEFAULT ''"],
       ['reservations', "phone TEXT NOT NULL DEFAULT ''"],
       ['reservations', 'reminder_sent BOOLEAN DEFAULT FALSE'],
+      ['reservations', "booking_ref TEXT NOT NULL DEFAULT ''"],
       ['notifications', "status TEXT NOT NULL DEFAULT 'sent'"],
       ['notifications', "recipient TEXT NOT NULL DEFAULT ''"],
       ['orders', "payment_method TEXT NOT NULL DEFAULT 'card'"],
@@ -549,6 +550,12 @@ export class RestaurantDbStore {
   }) {
     const reservationId = `r${Date.now()}`;
 
+    // Short reference the guest can quote, in the style of a real booking system
+    // (e.g. SXVROT7H). Distinct from the internal row id.
+    const bookingRef = Array.from({ length: 8 }, () =>
+      'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]
+    ).join('');
+
     // Normalise to ISO 8601 before storing. Accepts "19:30" (next occurrence) or any
     // full date-time; anything unparseable is rejected here instead of becoming a row
     // the reminder scheduler can never act on.
@@ -557,11 +564,15 @@ export class RestaurantDbStore {
       throw new AppError(400, `Could not understand reservation time "${data.time}". Use HH:MM or a full date and time.`);
     }
     const storedTime = reservationAt.toISOString();
-    const displayTime = formatReservationTime(storedTime);
+
+    // Message fields in booking-system style: Date: 2026-07-27, Time: 03:20:00
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const dateField = `${reservationAt.getFullYear()}-${pad(reservationAt.getMonth() + 1)}-${pad(reservationAt.getDate())}`;
+    const timeField = `${pad(reservationAt.getHours())}:${pad(reservationAt.getMinutes())}:00`;
 
     await this.pool.query(
-      'INSERT INTO reservations (id, guest_name, party_size, reservation_time, table_id, status, email, phone, reminder_sent) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-      [reservationId, data.guestName, data.partySize, storedTime, data.tableId, 'Reserved', data.email, data.phone, false]
+      'INSERT INTO reservations (id, guest_name, party_size, reservation_time, table_id, status, email, phone, reminder_sent, booking_ref) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+      [reservationId, data.guestName, data.partySize, storedTime, data.tableId, 'Reserved', data.email, data.phone, false, bookingRef]
     );
 
     // So the confirmation can name the table, not just an internal id.
@@ -581,21 +592,22 @@ export class RestaurantDbStore {
       content: renderRestaurantMailContent({
         guestName: data.guestName,
         action: 'reservation_confirmed',
-        time: displayTime,
+        date: dateField,
+        time: timeField,
         partySize: data.partySize,
         tableNumber,
-        reference: reservationId,
+        reference: bookingRef,
       }),
       subject: mailSubject('reservation_confirmed'),
       template: {
         name: process.env.WHATSAPP_TEMPLATE_CONFIRMATION || 'reservation_confirmed',
         languageCode: process.env.WHATSAPP_TEMPLATE_LANG || 'en',
-        params: [data.guestName, String(data.partySize), displayTime],
+        params: [data.guestName, String(data.partySize), `${dateField} ${timeField}`],
       },
       idSuffix: reservationId,
     }).catch((err) => console.error('[Reservation] Confirmation could not be sent', err));
 
-    return { id: reservationId, ...data, time: storedTime, status: 'Reserved' as const, reminderSent: false };
+    return { id: reservationId, ...data, time: storedTime, bookingRef, status: 'Reserved' as const, reminderSent: false };
   }
 
   /**
@@ -924,7 +936,11 @@ export class RestaurantDbStore {
     let sentCount = 0;
 
     for (const reservation of due) {
-      const reminderTime = formatReservationTime(reservation.time);
+      // Booking-system style: "today at 03:40 AM"
+      const at = new Date(reservation.time);
+      const reminderTime = Number.isNaN(at.getTime())
+        ? formatReservationTime(reservation.time)
+        : at.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
       // One-tap attendance links, like a real booking system. PUBLIC_BASE_URL must be
       // reachable from the guest's phone (LAN IP, not localhost) for these to work.
       const base = (process.env.PUBLIC_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
