@@ -143,8 +143,39 @@ export async function sendNotification(
     }
   }
 
-  // ── WHATSAPP (WhatsApp Web — no templates, free-form messages) ─────────────
-  // WHATSAPP_PROVIDER=web drives a linked WhatsApp account through whatsapp-web.js.
+  // ── WHATSAPP (standalone notification service — the default) ──────────────
+  // WHATSAPP_PROVIDER=service posts the message to the separate notification
+  // service (npm run notify, its own terminal), which delivers it through the Meta
+  // Cloud API as free-form text. No templates involved.
+  if (input.type === 'whatsapp' && env('WHATSAPP_PROVIDER') === 'service') {
+    const serviceUrl = (env('WHATSAPP_SERVICE_URL') ?? 'http://localhost:5001').replace(/\/$/, '');
+    try {
+      const response = await fetch(`${serviceUrl}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: input.recipient, message: input.content }),
+      });
+      const data: any = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        return { ok: false, provider: 'notification-service', error: data?.error ?? `HTTP ${response.status}` };
+      }
+      return {
+        ok: true,
+        provider: 'notification-service',
+        ...(data?.messageId ? { messageId: data.messageId } : {}),
+      };
+    } catch (err: any) {
+      const hint =
+        err?.cause?.code === 'ECONNREFUSED' || String(err?.message ?? '').includes('fetch failed')
+          ? `Notification service not reachable at ${serviceUrl}. Start it in its own terminal: npm run notify`
+          : err?.message ?? String(err);
+      console.error('[NotificationSender] WhatsApp service send failed:', hint);
+      return { ok: false, provider: 'notification-service', error: hint };
+    }
+  }
+
+  // ── WHATSAPP (WhatsApp Web — QR-linked account, no Meta at all) ────────────
+  // WHATSAPP_PROVIDER=web drives a linked WhatsApp account through Baileys.
   // The full message text goes out as-is — no Meta template approval involved.
   if (input.type === 'whatsapp' && env('WHATSAPP_PROVIDER') === 'web') {
     const result = await sendWhatsAppWeb({ to: input.recipient, body: input.content });
