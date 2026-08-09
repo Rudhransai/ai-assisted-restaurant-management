@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { Dashboard } from './Dashboard';
 import { PublicReservation } from './PublicReservation';
+import { EmployeePortal } from './EmployeePortal';
 import { Login } from './Login';
 import { Register } from './Register';
 import { CustomerDashboard } from './CustomerDashboard';
@@ -15,6 +16,11 @@ function AppRouter() {
   // Public reservation route
   if (path === '/reservation') {
     return <PublicReservation />;
+  }
+
+  // Staff self-service kiosk (attendance, leave, availability) — no login needed
+  if (path === '/staff') {
+    return <EmployeePortal />;
   }
 
   // Auth pages

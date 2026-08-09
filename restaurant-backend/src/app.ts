@@ -103,6 +103,8 @@ app.get('/api/v1/health', (_req, res) => {
 // each attempt slow but not slow enough — cap attempts per IP per window instead.
 const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, name: 'login' });
 const registerLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 20, name: 'register' });
+// The staff kiosk is public and identified only by employee code — throttle guessing.
+const selfServiceLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 60, name: 'staff-self' });
 
 app.post('/api/v1/auth/register', registerLimiter, async (req, res, next) => {
   try {
@@ -298,6 +300,35 @@ app.get('/api/v1/dishes', requireAuth(['customer', 'manager']), async (_req, res
   try {
     const dishes = await dbStore.getDishes();
     res.json({ success: true, data: dishes });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// New menu items. The recipe (per-serving ingredient quantities) is set separately in
+// the Billing tab so inventory deduction knows what the dish consumes.
+app.post('/api/v1/dishes', requireAuth(['manager']), async (req, res, next) => {
+  try {
+    const { name, description, price, category } = req.body ?? {};
+    if (!name || price === undefined) throw new AppError(400, 'name and price are required');
+    const parsedPrice = Number(price);
+    if (!Number.isFinite(parsedPrice) || parsedPrice < 0) throw new AppError(400, 'price must be a non-negative number');
+    const dish = await dbStore.addDish({
+      name: String(name).trim(),
+      description: (description ?? '').trim(),
+      price: parsedPrice,
+      category: (category ?? 'Mains').trim() || 'Mains',
+    });
+    res.status(201).json({ success: true, data: dish });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Which dishes were bought at what time, most recent first.
+app.get('/api/v1/dishes/timeline', requireAuth(['manager']), async (_req, res, next) => {
+  try {
+    res.json({ success: true, data: await dbStore.getDishTimeline() });
   } catch (error) {
     next(error);
   }
@@ -619,6 +650,9 @@ app.post('/api/v1/public/reservation', async (req, res, next) => {
         email: email ?? '',
         phone,
         preferredTableId: preferredTableId ?? '',
+        // The requested time was previously collected and thrown away — now the manager
+        // sees it on the waitlist and can honour it.
+        preferredTime: time,
       })
     );
 
@@ -626,6 +660,71 @@ app.post('/api/v1/public/reservation', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+// Table list for the public booking form, so guests can pick a preferred table.
+app.get('/api/v1/public/tables', async (_req, res, next) => {
+  try {
+    const tables = await dbStore.getTables();
+    res.json({
+      success: true,
+      data: (tables as Array<{ id: string; tableNumber: string; capacity: number; zone: string }>).map(
+        ({ id, tableNumber, capacity, zone }) => ({ id, tableNumber, capacity, zone })
+      ),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ── Employee self-service (kiosk-style: identified by employee code, no login) ─
+// Attendance, leave and availability are the employee's own actions — the manager
+// only reviews and approves.
+
+app.get('/api/v1/staff/self/:code', selfServiceLimiter, async (req, res, next) => {
+  try {
+    const status = await staffStore.getSelfStatus(req.params.code as string);
+    if (!status) throw new AppError(404, 'No employee found with that code');
+    res.json({ success: true, data: status });
+  } catch (e) { next(e); }
+});
+
+app.post('/api/v1/staff/self/:code/check-in', selfServiceLimiter, async (req, res, next) => {
+  try {
+    res.status(201).json({ success: true, data: await staffStore.selfCheckIn(req.params.code as string) });
+  } catch (e: any) { next(new AppError(400, e.message ?? 'Check-in failed')); }
+});
+
+app.post('/api/v1/staff/self/:code/check-out', selfServiceLimiter, async (req, res, next) => {
+  try {
+    res.json({ success: true, data: await staffStore.selfCheckOut(req.params.code as string) });
+  } catch (e: any) { next(new AppError(400, e.message ?? 'Check-out failed')); }
+});
+
+app.post('/api/v1/staff/self/:code/leave', selfServiceLimiter, async (req, res, next) => {
+  try {
+    const { leaveType, startDate, endDate, reason } = req.body ?? {};
+    if (!leaveType || !startDate || !endDate) throw new AppError(400, 'leaveType, startDate and endDate are required');
+    res.status(201).json({
+      success: true,
+      data: await staffStore.selfAddLeave(req.params.code as string, { leaveType, startDate, endDate, reason: reason ?? '' }),
+    });
+  } catch (e: any) { next(e instanceof AppError ? e : new AppError(400, e.message ?? 'Leave request failed')); }
+});
+
+app.post('/api/v1/staff/self/:code/availability', selfServiceLimiter, async (req, res, next) => {
+  try {
+    const { availableFrom, availableTo, status, remarks } = req.body ?? {};
+    if (!availableFrom || !availableTo) throw new AppError(400, 'availableFrom and availableTo are required');
+    res.status(201).json({
+      success: true,
+      data: await staffStore.selfAddAvailability(req.params.code as string, {
+        availableFrom, availableTo,
+        status: status === 'Unavailable' ? 'Unavailable' : 'Available',
+        remarks: remarks ?? '',
+      }),
+    });
+  } catch (e: any) { next(e instanceof AppError ? e : new AppError(400, e.message ?? 'Availability update failed')); }
 });
 
 // In production, serve the Vite-built React frontend and handle SPA routing

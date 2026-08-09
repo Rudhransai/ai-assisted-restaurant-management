@@ -36,6 +36,7 @@ export interface WaitlistItem {
   quotedWaitMinutes: number;
   status: 'Waiting' | 'Notified' | 'Seated';
   preferredTableId?: string;
+  preferredTime?: string;
 }
 
 export interface TableWatchItem {
@@ -165,6 +166,7 @@ export class RestaurantDbStore {
      */
     const migrations: Array<[string, string]> = [
       ['waitlist', "preferred_table_id TEXT DEFAULT ''"],
+      ['waitlist', "preferred_time TEXT NOT NULL DEFAULT ''"],
       ['table_watch', "phone TEXT NOT NULL DEFAULT ''"],
       ['waitlist', "email TEXT NOT NULL DEFAULT ''"],
       ['waitlist', "phone TEXT NOT NULL DEFAULT ''"],
@@ -296,7 +298,7 @@ export class RestaurantDbStore {
       'SELECT id, guest_name AS "guestName", party_size AS "partySize", reservation_time AS time, table_id AS "tableId", status, email, phone, reminder_sent AS "reminderSent" FROM reservations ORDER BY reservation_time DESC'
     );
     const waitlist = await this.pool.query(
-      'SELECT id, guest_name AS "guestName", party_size AS "partySize", email, phone, position, quoted_wait_minutes AS "quotedWaitMinutes", status, preferred_table_id AS "preferredTableId" FROM waitlist ORDER BY position'
+      'SELECT id, guest_name AS "guestName", party_size AS "partySize", email, phone, position, quoted_wait_minutes AS "quotedWaitMinutes", status, preferred_table_id AS "preferredTableId", preferred_time AS "preferredTime" FROM waitlist ORDER BY position'
     );
     const notifications = await this.pool.query(
       'SELECT id, type, recipient, content, status, created_at AS "createdAt" FROM notifications ORDER BY created_at DESC'
@@ -387,6 +389,29 @@ export class RestaurantDbStore {
     return result.rows as DishItem[];
   }
 
+  async addDish(data: { name: string; description: string; price: number; category: string }): Promise<DishItem> {
+    const id = `d${Date.now()}`;
+    await this.pool.query(
+      'INSERT INTO dishes (id, name, description, price, category, available) VALUES ($1,$2,$3,$4,$5,TRUE)',
+      [id, data.name, data.description, data.price, data.category]
+    );
+    return { id, name: data.name, description: data.description, price: data.price, category: data.category, available: true };
+  }
+
+  /** Every dish sold, most recent first — answers "which dishes were bought at what time". */
+  async getDishTimeline(limit = 60): Promise<Array<{ dishName: string; quantity: number; guestName: string; tableNumber: string; orderedAt: string }>> {
+    const result = await this.pool.query(
+      `SELECT oi.dish_name AS "dishName", oi.quantity, o.guest_name AS "guestName",
+              o.table_number AS "tableNumber", o.created_at AS "orderedAt"
+         FROM order_items oi
+         JOIN orders o ON o.id = oi.order_id
+        ORDER BY o.created_at DESC
+        LIMIT $1`,
+      [limit]
+    );
+    return result.rows;
+  }
+
   async createOrder(data: {
     guestName: string;
     email: string;
@@ -411,6 +436,46 @@ export class RestaurantDbStore {
         'INSERT INTO order_items (id, order_id, dish_id, dish_name, quantity, unit_price) VALUES ($1,$2,$3,$4,$5,$6)',
         [`oi${Date.now()}-${item.dishId}`, orderId, item.dishId, item.dishName, item.quantity, item.unitPrice]
       );
+    }
+
+    // Deduct inventory the moment the order is placed — the kitchen starts using the
+    // ingredients now, not when the bill is settled. Each dish's recipe
+    // (dish_ingredients) says how much of every ingredient one serving consumes.
+    // Dishes without a recipe are skipped with a warning: a data gap must not block
+    // the order itself.
+    for (const item of data.items) {
+      const recipe = await this.pool.query(
+        `SELECT di.ingredient_id AS "ingredientId", di.quantity_per_serving::float AS "perServing", i.name AS "ingredientName"
+           FROM dish_ingredients di
+           JOIN ingredients i ON i.id = di.ingredient_id
+          WHERE di.dish_id = $1`,
+        [item.dishId]
+      );
+      if (recipe.rows.length === 0) {
+        console.warn(`[Order] No recipe for dish "${item.dishName}" — inventory not deducted.`);
+        continue;
+      }
+      for (const line of recipe.rows) {
+        const used = Number(line.perServing) * Number(item.quantity);
+        if (!used) continue;
+        await this.pool.query(
+          'UPDATE ingredients SET current_stock = GREATEST(current_stock - $1, 0) WHERE id = $2',
+          [used, line.ingredientId]
+        );
+        await this.pool.query(
+          `INSERT INTO stock_entries (id, ingredient_id, ingredient_name, entry_type, quantity, date, notes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [
+            `se_${Date.now()}_${line.ingredientId}`,
+            line.ingredientId,
+            line.ingredientName,
+            'consumption',
+            used,
+            createdAt.slice(0, 10),
+            `Auto-deducted for order ${orderId}`,
+          ]
+        );
+      }
     }
 
     // Mark table as Reserved when an order is placed
@@ -499,6 +564,11 @@ export class RestaurantDbStore {
       [reservationId, data.guestName, data.partySize, storedTime, data.tableId, 'Reserved', data.email, data.phone, false]
     );
 
+    // So the confirmation can name the table, not just an internal id.
+    const tableNumber =
+      (await this.pool.query('SELECT table_number FROM tables WHERE id = $1', [data.tableId])).rows[0]
+        ?.table_number ?? data.tableId;
+
     // Confirm the booking straight away. Previously nothing was sent until the reminder,
     // so a guest had no record that the booking had been taken.
     //
@@ -513,6 +583,7 @@ export class RestaurantDbStore {
         action: 'reservation_confirmed',
         time: displayTime,
         partySize: data.partySize,
+        tableNumber,
       }),
       subject: mailSubject('reservation_confirmed'),
       template: {
@@ -590,6 +661,7 @@ export class RestaurantDbStore {
     email: string;
     phone: string;
     preferredTableId?: string;
+    preferredTime?: string;
   }) {
     const query = await this.pool.query(
       'SELECT COUNT(*)::int AS count FROM waitlist WHERE status IN ($1, $2)',
@@ -598,14 +670,21 @@ export class RestaurantDbStore {
     const position = (query.rows[0]?.count ?? 0) + 1;
     const waitlistId = `w${Date.now()}`;
 
+    // The guest's requested time. Stored as ISO when parseable so the dashboard can
+    // format it; a preference is optional, so unparseable input degrades to '' rather
+    // than rejecting the whole waitlist entry.
+    const preferredAt = data.preferredTime ? parseReservationTime(data.preferredTime) : null;
+    const preferredTime = preferredAt ? preferredAt.toISOString() : '';
+
     await this.pool.query(
-      'INSERT INTO waitlist (id, guest_name, party_size, email, phone, position, quoted_wait_minutes, status, preferred_table_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-      [waitlistId, data.guestName, data.partySize, data.email, data.phone, position, 10 + (position - 1) * 5, 'Waiting', data.preferredTableId ?? '']
+      'INSERT INTO waitlist (id, guest_name, party_size, email, phone, position, quoted_wait_minutes, status, preferred_table_id, preferred_time) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+      [waitlistId, data.guestName, data.partySize, data.email, data.phone, position, 10 + (position - 1) * 5, 'Waiting', data.preferredTableId ?? '', preferredTime]
     );
 
     return {
       id: waitlistId,
       ...data,
+      preferredTime,
       position,
       quotedWaitMinutes: 10 + (position - 1) * 5,
       status: 'Waiting' as const,
@@ -769,14 +848,16 @@ export class RestaurantDbStore {
 
   async assignWaitlistEntry(id: string) {
     // The party size must fit the table. Previously any free table was picked, so a party
-    // of eight could be seated at a two-top. Smallest sufficient table wins, to avoid
-    // burning a large table on a small party.
-    const partyResult = await this.pool.query('SELECT party_size FROM waitlist WHERE id = $1', [id]);
+    // of eight could be seated at a two-top. The guest's preferred table wins when it is
+    // free and big enough; otherwise the smallest sufficient table, to avoid burning a
+    // large table on a small party.
+    const partyResult = await this.pool.query('SELECT party_size, preferred_table_id FROM waitlist WHERE id = $1', [id]);
     const partySize = Number(partyResult.rows[0]?.party_size) || 1;
+    const preferredTableId = partyResult.rows[0]?.preferred_table_id ?? '';
 
     const availableTable = await this.pool.query(
-      'SELECT id, table_number AS "tableNumber", capacity, zone, status FROM tables WHERE status = $1 AND capacity >= $2 ORDER BY capacity, id LIMIT 1',
-      ['Available', partySize]
+      'SELECT id, table_number AS "tableNumber", capacity, zone, status FROM tables WHERE status = $1 AND capacity >= $2 ORDER BY (id = $3) DESC, capacity, id LIMIT 1',
+      ['Available', partySize, preferredTableId]
     );
     if ((availableTable.rows[0]?.id ?? null) == null) return null;
 

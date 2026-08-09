@@ -18,7 +18,8 @@ export function renderRestaurantMailContent(params: {
   }
   if (params.action === 'reservation_confirmed') {
     const party = params.partySize ? ` for ${params.partySize}` : '';
-    return `Hi${name}! Your table${party} is confirmed${params.time ? ` at ${params.time}` : ''}. We look forward to seeing you.`;
+    const table = params.tableNumber ? ` (table ${params.tableNumber})` : '';
+    return `Hi${name}! Your table${party}${table} is confirmed${params.time ? ` at ${params.time}` : ''}. We look forward to seeing you.`;
   }
   if (params.action === 'low_stock_alert') {
     return [

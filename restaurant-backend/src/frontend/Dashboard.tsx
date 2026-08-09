@@ -8,12 +8,13 @@ import { Billing } from './Billing';
 type TableStatus = 'Available' | 'Occupied' | 'Reserved';
 type TableItem = { id: string; tableNumber: string; capacity: number; zone: string; status: TableStatus };
 type ReservationItem = { id: string; guestName: string; partySize: number; time: string; tableId: string; status: string; phone: string; reminderSent?: boolean };
-type WaitlistItem = { id: string; guestName: string; partySize: number; phone: string; position: number; quotedWaitMinutes: number; status: 'Waiting' | 'Notified' | 'Seated' };
+type WaitlistItem = { id: string; guestName: string; partySize: number; phone: string; position: number; quotedWaitMinutes: number; status: 'Waiting' | 'Notified' | 'Seated'; preferredTableId?: string; preferredTime?: string };
 type NotificationItem = { id: string; type: string; recipient: string; content: string; status: string; createdAt: string };
 type TableWatchSummary = { tableId: string; tableNumber: string; waitingCount: number; notifiedCount: number };
 type OrderItem = { dishName: string; quantity: number; unitPrice: number };
 type OrderRecord = { id: string; guestName: string; email: string; tableNumber: string; partySize: number; totalAmount: number; status: string; paymentMethod: string; createdAt: string; items: OrderItem[] };
 type DishStat = { dishName: string; totalOrdered: number; revenue: number };
+type DishTimelineRow = { dishName: string; quantity: number; guestName: string; tableNumber: string; orderedAt: string };
 
 // Inventory types
 type Vendor = { id: string; name: string; phone: string; email: string; itemsSupplied: string };
@@ -56,7 +57,6 @@ type ShiftSchedule = { id: string; employeeId: string; employeeName: string; shi
 type EmployeeAvailability = { id: string; employeeId: string; employeeName: string; availableFrom: string; availableTo: string; status: 'Available' | 'Unavailable'; remarks: string };
 type LeaveRequest = { id: string; employeeId: string; employeeName: string; leaveType: string; startDate: string; endDate: string; reason: string; status: 'Pending' | 'Approved' | 'Rejected'; approvedBy: string };
 type AttendanceRecord = { id: string; employeeId: string; employeeName: string; attendanceDate: string; checkIn: string; checkOut: string; breakMinutes: number; workingHours: number; overtimeHours: number; lateMinutes: number; attendanceStatus: string; markedBy: string; shiftName?: string; shiftStartTime?: string };
-type PayrollSummary = { id: string; employeeId: string; employeeName: string; month: string; workingDays: number; workingHours: number; overtimeHours: number; leaveDays: number; generatedOn: string };
 type StaffAnalytics = { totalEmployees: number; activeEmployees: number; todayAttendance: { present: number; absent: number; on_leave: number }; pendingLeaveRequests: number; avgWorkingHoursThisMonth: number; topLateArrivals: { name: string; total_late: number }[] };
 
 // Module 5 – Customer Feedback
@@ -194,13 +194,17 @@ export function Dashboard() {
   const [tableWatches, setTableWatches] = useState<TableWatchSummary[]>([]);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [dishStats, setDishStats] = useState<DishStat[]>([]);
+  const [dishTimeline, setDishTimeline] = useState<DishTimelineRow[]>([]);
+  const [showDishForm, setShowDishForm] = useState(false);
+  const [dishForm, setDishForm] = useState({ name: '', description: '', price: '', category: 'Mains' });
+  const [orderMsg, setOrderMsg] = useState<string | null>(null);
   const [stats, setStats] = useState({ occupiedTables: 0, reservedTables: 0, pendingWaitlist: 0, occupancyRate: 0 });
   const [selectedTable, setSelectedTable] = useState<TableItem | null>(null);
   const [clearMsg, setClearMsg] = useState<string | null>(null);
   const [showWalkInForm, setShowWalkInForm] = useState(false);
   const [showReservationForm, setShowReservationForm] = useState(false);
   const [reservationForm, setReservationForm] = useState({ guestName: '', partySize: '2', time: '20:00', tableId: 'M2', phone: '', email: '' });
-  const [walkInForm, setWalkInForm] = useState({ guestName: '', partySize: '2', phone: '' });
+  const [walkInForm, setWalkInForm] = useState({ guestName: '', partySize: '2', phone: '', preferredTableId: '', preferredTime: '' });
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState('');
 
@@ -235,9 +239,8 @@ export function Dashboard() {
   const [availability, setAvailability] = useState<EmployeeAvailability[]>([]);
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
-  const [payroll, setPayroll] = useState<PayrollSummary[]>([]);
   const [staffAnalytics, setStaffAnalytics] = useState<StaffAnalytics | null>(null);
-  const [staffSubTab, setStaffSubTab] = useState<'overview' | 'roster' | 'availability' | 'leave' | 'attendance' | 'payroll'>('overview');
+  const [staffSubTab, setStaffSubTab] = useState<'overview' | 'roster' | 'availability' | 'leave' | 'attendance'>('overview');
   const [staffMsg, setStaffMsg] = useState<string | null>(null);
   // Staff forms
   const [empForm, setEmpForm] = useState({ employeeCode: '', fullName: '', role: 'Waitstaff', phoneNumber: '' });
@@ -245,10 +248,6 @@ export function Dashboard() {
   const [shiftForm, setShiftForm] = useState({ shiftName: '', startTime: '09:00', endTime: '17:00', breakMinutes: '60' });
   const [showShiftForm, setShowShiftForm] = useState(false);
   const [scheduleForm, setScheduleForm] = useState({ employeeId: '', shiftId: '', shiftDate: today, remarks: '' });
-  const [availForm, setAvailForm] = useState({ employeeId: '', availableFrom: today, availableTo: today, status: 'Available' as 'Available' | 'Unavailable', remarks: '' });
-  const [leaveForm, setLeaveForm] = useState({ employeeId: '', leaveType: 'Sick Leave', startDate: today, endDate: today, reason: '' });
-  const [attForm, setAttForm] = useState({ employeeId: '', attendanceDate: today, checkIn: '09:00', checkOut: '17:00', breakMinutes: '60', attendanceStatus: 'Present' as 'Present' | 'Absent' | 'Leave' | 'Half-Day', shiftId: '' });
-  const [payrollMonth, setPayrollMonth] = useState(today.slice(0, 7));
 
   // Feedback state (Module 5)
   const [feedbackItems, setFeedbackItems] = useState<FeedbackItem[]>([]);
@@ -256,7 +255,7 @@ export function Dashboard() {
   const [feedbackCustomers, setFeedbackCustomers] = useState<FeedbackCustomer[]>([]);
   const [feedbackCategories, setFeedbackCategories] = useState<FeedbackCategory[]>([]);
   const [weeklySummaries, setWeeklySummaries] = useState<WeeklySummary[]>([]);
-  const [feedbackSubTab, setFeedbackSubTab] = useState<'overview' | 'reviews' | 'sentiment' | 'categories' | 'trends' | 'satisfaction' | 'reputation' | 'weekly'>('overview');
+  const [feedbackSubTab, setFeedbackSubTab] = useState<'overview' | 'reviews' | 'sentiment' | 'categories' | 'weekly'>('overview');
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
   const [feedbackForm, setFeedbackForm] = useState({ customerName: '', reviewText: '', rating: '5', source: 'Google', reviewDate: today });
   const [showFeedbackForm, setShowFeedbackForm] = useState(false);
@@ -286,14 +285,31 @@ export function Dashboard() {
   };
 
   const refreshOrders = async () => {
-    const [ordersRes, statsRes] = await Promise.all([
+    const [ordersRes, statsRes, timelineRes] = await Promise.all([
       authFetch('/api/v1/orders'),
       authFetch('/api/v1/dishes/stats'),
+      authFetch('/api/v1/dishes/timeline'),
     ]);
     const op = await ordersRes.json().catch(() => ({}));
     const sp = await statsRes.json().catch(() => ({}));
+    const tp = await timelineRes.json().catch(() => ({}));
     if (ordersRes.ok) setOrders(op.data ?? []);
     if (statsRes.ok) setDishStats(sp.data ?? []);
+    if (timelineRes.ok) setDishTimeline(tp.data ?? []);
+  };
+
+  const handleAddDish = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dishForm.name.trim() || !dishForm.price) return;
+    const ok = await post('/api/v1/dishes', {
+      name: dishForm.name, description: dishForm.description,
+      price: Number(dishForm.price), category: dishForm.category,
+    });
+    if (ok) {
+      setDishForm({ name: '', description: '', price: '', category: 'Mains' });
+      setShowDishForm(false);
+      setOrderMsg(`✅ Dish added to the menu. Set its recipe in the Billing tab so inventory deducts correctly.`);
+    }
   };
 
   const refreshInventory = async () => {
@@ -323,19 +339,18 @@ export function Dashboard() {
 
   const refreshStaff = async () => {
     const parse = async (r: Response) => { const d = await r.json().catch(() => ({})); return r.ok ? (d.data ?? d) : null; };
-    const [empRes, shiftRes, schedRes, availRes, leaveRes, attRes, payRes, anaRes] = await Promise.all([
+    const [empRes, shiftRes, schedRes, availRes, leaveRes, attRes, anaRes] = await Promise.all([
       authFetch('/api/v1/staff/employees'),
       authFetch('/api/v1/staff/shifts'),
       authFetch('/api/v1/staff/schedule'),
       authFetch('/api/v1/staff/availability'),
       authFetch('/api/v1/staff/leave'),
       authFetch('/api/v1/staff/attendance'),
-      authFetch('/api/v1/staff/payroll'),
       authFetch('/api/v1/staff/analytics'),
     ]);
-    const [emp, sh, sc, av, lv, at, py, an] = await Promise.all([
+    const [emp, sh, sc, av, lv, at, an] = await Promise.all([
       parse(empRes), parse(shiftRes), parse(schedRes), parse(availRes),
-      parse(leaveRes), parse(attRes), parse(payRes), parse(anaRes),
+      parse(leaveRes), parse(attRes), parse(anaRes),
     ]);
     if (emp) setEmployees(emp);
     if (sh) setShifts(sh);
@@ -343,7 +358,6 @@ export function Dashboard() {
     if (av) setAvailability(av);
     if (lv) setLeaveRequests(lv);
     if (at) setAttendance(at);
-    if (py) setPayroll(py);
     if (an) setStaffAnalytics(an);
   };
 
@@ -439,8 +453,8 @@ export function Dashboard() {
   const handleCreateWalkIn = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!walkInForm.guestName.trim()) return;
-    await authFetch('/api/v1/waitlist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ guestName: walkInForm.guestName, partySize: Number(walkInForm.partySize), phone: walkInForm.phone }) });
-    setWalkInForm({ guestName: '', partySize: '2', phone: '' }); setShowWalkInForm(false); setActiveTab('waitlist'); await refreshDashboard();
+    await authFetch('/api/v1/waitlist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ guestName: walkInForm.guestName, partySize: Number(walkInForm.partySize), phone: walkInForm.phone, preferredTableId: walkInForm.preferredTableId, preferredTime: walkInForm.preferredTime }) });
+    setWalkInForm({ guestName: '', partySize: '2', phone: '', preferredTableId: '', preferredTime: '' }); setShowWalkInForm(false); setActiveTab('waitlist'); await refreshDashboard();
   };
 
   // Inventory handlers
@@ -502,28 +516,11 @@ export function Dashboard() {
     const ok = await post('/api/v1/staff/schedule', scheduleForm);
     if (ok) { setScheduleForm({ employeeId: '', shiftId: '', shiftDate: today, remarks: '' }); setStaffMsg('✅ Shift assigned'); await refreshStaff(); }
   };
-  const handleAddAvailability = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const ok = await post('/api/v1/staff/availability', availForm);
-    if (ok) { setAvailForm({ employeeId: '', availableFrom: today, availableTo: today, status: 'Available', remarks: '' }); setStaffMsg('✅ Availability recorded'); await refreshStaff(); }
-  };
-  const handleAddLeave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const ok = await post('/api/v1/staff/leave', leaveForm);
-    if (ok) { setLeaveForm({ employeeId: '', leaveType: 'Sick Leave', startDate: today, endDate: today, reason: '' }); setStaffMsg('✅ Leave request submitted'); await refreshStaff(); }
-  };
+  // Availability, leave submission and attendance marking moved to the employee
+  // self-service portal at /staff — the manager only reviews and approves here.
   const handleLeaveAction = async (id: string, status: 'Approved' | 'Rejected') => {
     await authFetch(`/api/v1/staff/leave/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, approvedBy: 'Manager' }) });
     setStaffMsg(`✅ Leave ${status.toLowerCase()}`); await refreshStaff();
-  };
-  const handleMarkAttendance = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const ok = await post('/api/v1/staff/attendance', { ...attForm, breakMinutes: Number(attForm.breakMinutes) });
-    if (ok) { setAttForm({ employeeId: '', attendanceDate: today, checkIn: '09:00', checkOut: '17:00', breakMinutes: '60', attendanceStatus: 'Present', shiftId: '' }); setStaffMsg('✅ Attendance marked'); await refreshStaff(); }
-  };
-  const handleGeneratePayroll = async () => {
-    const ok = await post('/api/v1/staff/payroll/generate', { month: payrollMonth });
-    if (ok) { setStaffMsg(`✅ Payroll generated for ${payrollMonth}`); await refreshStaff(); }
   };
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -631,6 +628,11 @@ export function Dashboard() {
               <input value={walkInForm.guestName} onChange={e => setWalkInForm({ ...walkInForm, guestName: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5" placeholder="Guest name" required />
               <input value={walkInForm.partySize} onChange={e => setWalkInForm({ ...walkInForm, partySize: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5" placeholder="Party size" type="number" min="1" />
               <input value={walkInForm.phone} onChange={e => setWalkInForm({ ...walkInForm, phone: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5" placeholder="Phone" />
+              <select value={walkInForm.preferredTableId} onChange={e => setWalkInForm({ ...walkInForm, preferredTableId: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5">
+                <option value="">Any table</option>
+                {tables.map(t => <option key={t.id} value={t.id}>Prefers {t.tableNumber} ({t.zone})</option>)}
+              </select>
+              <input value={walkInForm.preferredTime} onChange={e => setWalkInForm({ ...walkInForm, preferredTime: e.target.value })} className="rounded-md border border-line bg-white px-3 py-2.5" placeholder="Preferred time (HH:MM, optional)" />
             </div>
             <div className="mt-4 flex justify-end"><button type="submit" className="rounded-md bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-ink-soft">Add to waitlist</button></div>
           </form>
@@ -758,7 +760,7 @@ export function Dashboard() {
             <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white/90 shadow-sm">
               <table className="w-full text-left">
                 <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  <tr><th className="p-4">Queue</th><th className="p-4">Guest</th><th className="p-4">Party size</th><th className="p-4">Wait</th><th className="p-4">Status</th><th className="p-4 text-right">Actions</th></tr>
+                  <tr><th className="p-4">Queue</th><th className="p-4">Guest</th><th className="p-4">Party size</th><th className="p-4">Preference</th><th className="p-4">Wait</th><th className="p-4">Status</th><th className="p-4 text-right">Actions</th></tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
                   {waitlist.map(entry => (
@@ -766,6 +768,15 @@ export function Dashboard() {
                       <td className="p-4 font-semibold text-amber-700">#{entry.position}</td>
                       <td className="p-4 font-semibold text-slate-800">{entry.guestName}</td>
                       <td className="p-4">{entry.partySize} guests</td>
+                      <td className="p-4 text-slate-500">
+                        {entry.preferredTableId || entry.preferredTime ? (
+                          <>
+                            {entry.preferredTableId && <span className="font-mono">{tables.find(t => t.id === entry.preferredTableId)?.tableNumber ?? entry.preferredTableId}</span>}
+                            {entry.preferredTableId && entry.preferredTime && ' · '}
+                            {entry.preferredTime && formatReservationTime(entry.preferredTime)}
+                          </>
+                        ) : <span className="italic text-slate-400">Any</span>}
+                      </td>
                       <td className="p-4 text-slate-500">~{entry.quotedWaitMinutes} mins</td>
                       <td className="p-4"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${entry.status === 'Notified' ? 'bg-amber-100 text-amber-800' : entry.status === 'Seated' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>{entry.status}</span></td>
                       <td className="p-4 text-right">
@@ -776,7 +787,7 @@ export function Dashboard() {
                       </td>
                     </tr>
                   ))}
-                  {waitlist.length === 0 && <tr><td colSpan={6} className="p-6 text-center text-sm text-slate-400 italic">No waitlist entries.</td></tr>}
+                  {waitlist.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-sm text-slate-400 italic">No waitlist entries.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -785,11 +796,37 @@ export function Dashboard() {
           {/* ══ ORDERS ══════════════════════════════════════════════════════ */}
           {activeTab === 'orders' && (
             <div className="space-y-8">
+              {orderMsg && (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 flex items-center justify-between">
+                  {orderMsg}
+                  <button onClick={() => setOrderMsg(null)} className="text-emerald-600 hover:text-emerald-900 cursor-pointer text-lg leading-none">×</button>
+                </div>
+              )}
               <div className="grid gap-4 md:grid-cols-3">
                 <StatCard label="Total Orders" value={orders.length} tone="text-ink" />
                 <StatCard label="Total Revenue" value={fmt(totalOrderRevenue)} tone="text-free" />
                 <StatCard label="Avg Bill" value={orders.length > 0 ? fmt(totalOrderRevenue / orders.length) : '₹0'} tone="text-hold" />
               </div>
+
+              <SectionCard title="Menu" sub="Add new dishes to the menu — customers see them immediately."
+                action={<button onClick={() => setShowDishForm(p => !p)} className="rounded-2xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 cursor-pointer">{showDishForm ? 'Hide form' : '+ Add Dish'}</button>}>
+                {showDishForm ? (
+                  <form onSubmit={handleAddDish} className="space-y-3">
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <input required value={dishForm.name} onChange={e => setDishForm({ ...dishForm, name: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Dish name" />
+                      <input value={dishForm.description} onChange={e => setDishForm({ ...dishForm, description: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Short description" />
+                      <input required type="number" min="0" step="0.01" value={dishForm.price} onChange={e => setDishForm({ ...dishForm, price: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Price (₹)" />
+                      <select value={dishForm.category} onChange={e => setDishForm({ ...dishForm, category: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5">
+                        <option>Starters</option><option>Mains</option><option>Desserts</option><option>Drinks</option>
+                      </select>
+                    </div>
+                    <p className="text-xs text-slate-500">After adding, set the dish's recipe (ingredients per serving) in the Billing tab — that's what drives automatic stock deduction.</p>
+                    <div className="flex justify-end"><button type="submit" className="rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800 cursor-pointer">Add Dish</button></div>
+                  </form>
+                ) : (
+                  <p className="text-sm text-slate-500">New dishes appear on the customer menu instantly. Ingredients are managed in the Inventory tab; per-dish recipes in the Billing tab.</p>
+                )}
+              </SectionCard>
               <SectionCard title="Dish order counts" sub="Total quantities ordered across all orders." action={<button onClick={() => void refreshOrders()} className="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 cursor-pointer">Refresh</button>}>
                 {dishStats.length === 0 ? <p className="text-sm text-slate-400 italic">No orders placed yet.</p> : (
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -808,6 +845,29 @@ export function Dashboard() {
                   </div>
                 )}
               </SectionCard>
+              <SectionCard title="Dish purchases by time" sub="Every dish sold, most recent first — what was bought and when.">
+                {dishTimeline.length === 0 ? <p className="text-sm text-slate-400 italic">No dishes sold yet.</p> : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        <tr><th className="p-2.5">Time</th><th className="p-2.5">Dish</th><th className="p-2.5">Qty</th><th className="p-2.5">Guest</th><th className="p-2.5">Table</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        {dishTimeline.map((row, i) => (
+                          <tr key={i} className="hover:bg-slate-50">
+                            <td className="p-2.5 whitespace-nowrap text-slate-500">{new Date(row.orderedAt).toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</td>
+                            <td className="p-2.5 font-semibold text-slate-800">{row.dishName}</td>
+                            <td className="p-2.5">×{row.quantity}</td>
+                            <td className="p-2.5">{row.guestName}</td>
+                            <td className="p-2.5 font-mono">{row.tableNumber}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </SectionCard>
+
               <SectionCard title="Customer orders" sub={`${orders.length} order${orders.length !== 1 ? 's' : ''} · Total: ${fmt(totalOrderRevenue)}`}>
                 {orders.length === 0 ? <p className="text-sm text-slate-400 italic">No orders yet.</p> : (
                   <div className="space-y-4">
@@ -1463,10 +1523,10 @@ export function Dashboard() {
 
               {/* Staff sub-tabs */}
               <nav className="flex flex-wrap gap-2">
-                {(['overview', 'roster', 'availability', 'leave', 'attendance', 'payroll'] as const).map(t => (
+                {(['overview', 'roster', 'availability', 'leave', 'attendance'] as const).map(t => (
                   <button key={t} onClick={() => setStaffSubTab(t)}
                     className={`rounded-full px-4 py-2 text-sm font-semibold capitalize cursor-pointer transition ${staffSubTab === t ? 'bg-slate-900 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                    {t === 'overview' ? '📊 Overview' : t === 'roster' ? '📋 Shift Roster' : t === 'availability' ? '🗓️ Availability' : t === 'leave' ? '🏖️ Leave' : t === 'attendance' ? '✅ Attendance' : '💰 Payroll'}
+                    {t === 'overview' ? '📊 Overview' : t === 'roster' ? '📋 Shift Roster' : t === 'availability' ? '🗓️ Availability' : t === 'leave' ? '🏖️ Leave' : '✅ Attendance'}
                   </button>
                 ))}
                 <button onClick={() => void refreshStaff()} className="ml-auto rounded-full border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 cursor-pointer">↻ Refresh</button>
@@ -1618,22 +1678,9 @@ export function Dashboard() {
               {/* ─ Availability ─ */}
               {staffSubTab === 'availability' && (
                 <div className="space-y-6">
-                  <SectionCard title="Record Staff Availability" sub="Log when employees are available or unavailable before scheduling.">
-                    <form onSubmit={handleAddAvailability} className="grid gap-3 md:grid-cols-5">
-                      <select required value={availForm.employeeId} onChange={e => setAvailForm({ ...availForm, employeeId: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5">
-                        <option value="">Select Employee</option>
-                        {employees.map(emp => <option key={emp.id} value={emp.id}>{emp.fullName}</option>)}
-                      </select>
-                      <input type="date" value={availForm.availableFrom} onChange={e => setAvailForm({ ...availForm, availableFrom: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" />
-                      <input type="date" value={availForm.availableTo} onChange={e => setAvailForm({ ...availForm, availableTo: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" />
-                      <select value={availForm.status} onChange={e => setAvailForm({ ...availForm, status: e.target.value as 'Available' | 'Unavailable' })} className="rounded-xl border border-slate-300 px-3 py-2.5">
-                        <option value="Available">Available</option>
-                        <option value="Unavailable">Unavailable</option>
-                      </select>
-                      <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 cursor-pointer">Record</button>
-                    </form>
-                    <input value={availForm.remarks} onChange={e => setAvailForm({ ...availForm, remarks: e.target.value })} className="mt-3 w-full rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Remarks (e.g. Available Mon-Fri only)" />
-                  </SectionCard>
+                  <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+                    Employees set their own availability at <a href="/staff" target="_blank" rel="noreferrer" className="font-bold underline underline-offset-2">/staff</a> — use these records when planning the shift roster.
+                  </div>
 
                   <SectionCard title="Availability Records" sub="Current availability and unavailability periods for all staff.">
                     <div className="overflow-x-auto">
@@ -1662,21 +1709,9 @@ export function Dashboard() {
               {/* ─ Leave ─ */}
               {staffSubTab === 'leave' && (
                 <div className="space-y-6">
-                  <SectionCard title="Submit Leave Request" sub="Log sick leave, casual leave, or planned absence.">
-                    <form onSubmit={handleAddLeave} className="grid gap-3 md:grid-cols-3 lg:grid-cols-5">
-                      <select required value={leaveForm.employeeId} onChange={e => setLeaveForm({ ...leaveForm, employeeId: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5">
-                        <option value="">Select Employee</option>
-                        {employees.map(emp => <option key={emp.id} value={emp.id}>{emp.fullName}</option>)}
-                      </select>
-                      <select value={leaveForm.leaveType} onChange={e => setLeaveForm({ ...leaveForm, leaveType: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5">
-                        {['Sick Leave', 'Casual Leave', 'Annual Leave', 'Maternity Leave', 'Unpaid Leave', 'Other'].map(t => <option key={t}>{t}</option>)}
-                      </select>
-                      <input type="date" value={leaveForm.startDate} onChange={e => setLeaveForm({ ...leaveForm, startDate: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" />
-                      <input type="date" value={leaveForm.endDate} onChange={e => setLeaveForm({ ...leaveForm, endDate: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" />
-                      <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 cursor-pointer">Submit Request</button>
-                    </form>
-                    <input value={leaveForm.reason} onChange={e => setLeaveForm({ ...leaveForm, reason: e.target.value })} className="mt-3 w-full rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Reason (e.g. Fever, Personal work)" />
-                  </SectionCard>
+                  <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+                    Employees submit their own leave requests at <a href="/staff" target="_blank" rel="noreferrer" className="font-bold underline underline-offset-2">/staff</a> — your job here is only to approve or reject.
+                  </div>
 
                   <SectionCard title="Leave Requests" sub="Pending and historical leave requests. Approve or reject here.">
                     <div className="space-y-3">
@@ -1708,42 +1743,9 @@ export function Dashboard() {
               {/* ─ Attendance ─ */}
               {staffSubTab === 'attendance' && (
                 <div className="space-y-6">
-                  <SectionCard title="Mark Attendance" sub="Record employee check-in, check-out and break time. Working hours and overtime are calculated automatically.">
-                    <form onSubmit={handleMarkAttendance} className="grid gap-3 md:grid-cols-3 lg:grid-cols-4">
-                      <select required value={attForm.employeeId} onChange={e => setAttForm({ ...attForm, employeeId: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5">
-                        <option value="">Select Employee</option>
-                        {employees.filter(emp => emp.status === 'Active').map(emp => <option key={emp.id} value={emp.id}>{emp.fullName}</option>)}
-                      </select>
-                      <input type="date" value={attForm.attendanceDate} onChange={e => setAttForm({ ...attForm, attendanceDate: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" />
-                      <select value={attForm.attendanceStatus} onChange={e => setAttForm({ ...attForm, attendanceStatus: e.target.value as typeof attForm.attendanceStatus })} className="rounded-xl border border-slate-300 px-3 py-2.5">
-                        <option value="Present">Present</option>
-                        <option value="Absent">Absent</option>
-                        <option value="Leave">On Leave</option>
-                        <option value="Half-Day">Half-Day</option>
-                      </select>
-                      <select value={attForm.shiftId} onChange={e => setAttForm({ ...attForm, shiftId: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5">
-                        <option value="">Select Shift (optional)</option>
-                        {shifts.map(s => <option key={s.id} value={s.id}>{s.shiftName} ({s.startTime}–{s.endTime})</option>)}
-                      </select>
-                      {(attForm.attendanceStatus === 'Present' || attForm.attendanceStatus === 'Half-Day') && (
-                        <>
-                          <div className="flex items-center gap-2">
-                            <label className="text-xs text-slate-500 whitespace-nowrap">Check-In</label>
-                            <input type="time" value={attForm.checkIn} onChange={e => setAttForm({ ...attForm, checkIn: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5 w-full" />
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <label className="text-xs text-slate-500 whitespace-nowrap">Check-Out</label>
-                            <input type="time" value={attForm.checkOut} onChange={e => setAttForm({ ...attForm, checkOut: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5 w-full" />
-                          </div>
-                          <input type="number" min="0" value={attForm.breakMinutes} onChange={e => setAttForm({ ...attForm, breakMinutes: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Break (minutes)" />
-                        </>
-                      )}
-                      <button type="submit" className="lg:col-span-4 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 cursor-pointer">Mark Attendance</button>
-                    </form>
-                    <p className="mt-3 text-xs text-slate-400 bg-slate-50 rounded-xl p-3 border border-slate-200">
-                      <strong>Auto-calculated:</strong> Working Hours = (Check-Out − Check-In) − Break. Overtime = Working Hours − Shift Hours. Late Minutes = Check-In − Shift Start Time.
-                    </p>
-                  </SectionCard>
+                  <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+                    Employees mark their own attendance at <a href="/staff" target="_blank" rel="noreferrer" className="font-bold underline underline-offset-2">/staff</a> using their employee code — check-in and check-out are stamped automatically. Records marked <strong>Self</strong> below came from the staff portal.
+                  </div>
 
                   <SectionCard title="Attendance Log" sub="Daily attendance records with working hours, overtime and late arrival tracking.">
                     <div className="overflow-x-auto">
@@ -1777,45 +1779,6 @@ export function Dashboard() {
                 </div>
               )}
 
-              {/* ─ Payroll ─ */}
-              {staffSubTab === 'payroll' && (
-                <div className="space-y-6">
-                  <SectionCard title="Generate Payroll Summary" sub="Computes working days, hours, overtime and leave days from attendance data for a given month.">
-                    <div className="flex items-center gap-3">
-                      <input type="month" value={payrollMonth} onChange={e => setPayrollMonth(e.target.value)} className="rounded-xl border border-slate-300 px-3 py-2.5" />
-                      <button onClick={handleGeneratePayroll} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 cursor-pointer">Generate Payroll for {payrollMonth}</button>
-                    </div>
-                    <p className="mt-3 text-xs text-slate-400 bg-slate-50 rounded-xl p-3 border border-slate-200">
-                      <strong>Formula:</strong> Working Days = attendance days marked Present or Half-Day. Working Hours = sum of all logged hours. Overtime = hours beyond scheduled shift. Leave Days = approved leave in this month.
-                    </p>
-                  </SectionCard>
-
-                  <SectionCard title="Payroll Summary" sub="Generated payroll data by employee and month.">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm text-left">
-                        <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                          <tr><th className="p-3">Month</th><th className="p-3">Employee</th><th className="p-3">Working Days</th><th className="p-3">Working Hours</th><th className="p-3">Overtime Hours</th><th className="p-3">Leave Days</th><th className="p-3">Generated On</th></tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {payroll.map(p => (
-                            <tr key={p.id} className="hover:bg-slate-50">
-                              <td className="p-3 font-semibold text-slate-800">{p.month}</td>
-                              <td className="p-3 text-slate-700">{p.employeeName}</td>
-                              <td className="p-3 text-sky-700 font-semibold">{p.workingDays}</td>
-                              <td className="p-3 text-slate-700">{p.workingHours.toFixed(2)} h</td>
-                              <td className="p-3">{p.overtimeHours > 0 ? <span className="font-semibold text-purple-700">{p.overtimeHours.toFixed(2)} h</span> : '—'}</td>
-                              <td className="p-3">{p.leaveDays > 0 ? <span className="text-amber-700 font-semibold">{p.leaveDays}</span> : '—'}</td>
-                              <td className="p-3 text-slate-400 text-xs">{p.generatedOn}</td>
-                            </tr>
-                          ))}
-                          {payroll.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-slate-400 italic">No payroll generated yet. Select a month and click Generate.</td></tr>}
-                        </tbody>
-                      </table>
-                    </div>
-                  </SectionCard>
-                </div>
-              )}
-
             </div>
           )}
 
@@ -1831,10 +1794,10 @@ export function Dashboard() {
 
               {/* Sub-tabs */}
               <nav className="flex flex-wrap gap-2">
-                {(['overview', 'reviews', 'sentiment', 'categories', 'trends', 'satisfaction', 'reputation', 'weekly'] as const).map(t => (
+                {(['overview', 'reviews', 'sentiment', 'categories', 'weekly'] as const).map(t => (
                   <button key={t} onClick={() => setFeedbackSubTab(t)}
                     className={`rounded-full px-4 py-2 text-sm font-semibold capitalize cursor-pointer transition ${feedbackSubTab === t ? 'bg-slate-900 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                    {t === 'overview' ? '📊 Overview' : t === 'reviews' ? '📝 Reviews' : t === 'sentiment' ? '🤖 Sentiment' : t === 'categories' ? '🏷️ Categories' : t === 'trends' ? '📈 Trends' : t === 'satisfaction' ? '😊 Satisfaction' : t === 'reputation' ? '⭐ Reputation' : '📋 Weekly'}
+                    {t === 'overview' ? '📊 Overview' : t === 'reviews' ? '📝 Reviews' : t === 'sentiment' ? '🤖 Sentiment' : t === 'categories' ? '🏷️ Categories' : '📋 Weekly'}
                   </button>
                 ))}
                 <button onClick={() => void refreshFeedback()} className="ml-auto rounded-full border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 cursor-pointer">↻ Refresh</button>
@@ -2110,231 +2073,6 @@ export function Dashboard() {
                       </table>
                     </div>
                   </SectionCard>
-                </div>
-              )}
-
-              {/* ─ Trends ─ */}
-              {feedbackSubTab === 'trends' && feedbackAnalytics && (
-                <div className="space-y-6">
-                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    <StatCard label="Top Improving Category" value={feedbackAnalytics.topImprovingCategory} tone="text-free" sub="Best rating improvement vs prior period" />
-                    <StatCard label="Top Declining Category" value={feedbackAnalytics.topDecliningCategory} tone="text-busy" sub="Largest rating drop vs prior period" />
-                    <StatCard label="Rating Trend" value={feedbackAnalytics.ratingTrendDirection === 'up' ? '↑ Improving' : feedbackAnalytics.ratingTrendDirection === 'down' ? '↓ Declining' : '→ Stable'} tone={feedbackAnalytics.ratingTrendDirection === 'up' ? 'text-emerald-700' : feedbackAnalytics.ratingTrendDirection === 'down' ? 'text-rose-600' : 'text-slate-600'} />
-                    <StatCard label="Review Growth" value={`${feedbackAnalytics.reviewGrowthPercent >= 0 ? '+' : ''}${feedbackAnalytics.reviewGrowthPercent}%`} tone={feedbackAnalytics.reviewGrowthPercent >= 0 ? 'text-emerald-700' : 'text-rose-600'} sub="Last 30 days vs prior 30" />
-                  </div>
-
-                  <div className="grid gap-6 xl:grid-cols-2">
-                    <SectionCard title="Monthly Review Volume" sub="Review count and average rating per month.">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm text-left">
-                          <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                            <tr><th className="p-3">Month</th><th className="p-3">Reviews</th><th className="p-3">Avg Rating</th></tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {feedbackAnalytics.monthlyReviews.map(m => (
-                              <tr key={m.month} className="hover:bg-slate-50">
-                                <td className="p-3 font-semibold text-slate-800">{m.month}</td>
-                                <td className="p-3 text-sky-700 font-semibold">{m.count}</td>
-                                <td className="p-3 text-amber-600 font-semibold">{m.avgRating.toFixed(1)} ★</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </SectionCard>
-
-                    <SectionCard title="Weekly Review Growth" sub="Review volume week by week.">
-                      <div className="space-y-2">
-                        {feedbackAnalytics.weeklyReviews.map(w => {
-                          const maxW = Math.max(...feedbackAnalytics.weeklyReviews.map(x => x.count), 1);
-                          const pct = Math.round((w.count / maxW) * 100);
-                          return (
-                            <div key={w.week} className="flex items-center gap-3 text-sm">
-                              <span className="w-24 text-xs text-slate-500 shrink-0">Wk {w.week.slice(5)}</span>
-                              <div className="flex-1 bg-slate-100 rounded-full h-3">
-                                <div className="h-3 rounded-full bg-sky-400" style={{ width: `${pct}%` }} />
-                              </div>
-                              <span className="w-8 text-xs text-slate-600 text-right font-semibold">{w.count}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </SectionCard>
-
-                    <SectionCard title="Monthly Sentiment Trend" sub="Positive vs Negative review evolution over time.">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm text-left">
-                          <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                            <tr><th className="p-3">Month</th><th className="p-3 text-emerald-600">Positive</th><th className="p-3 text-slate-500">Neutral</th><th className="p-3 text-rose-600">Negative</th></tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {feedbackAnalytics.sentimentTrend.map(m => (
-                              <tr key={m.month} className="hover:bg-slate-50">
-                                <td className="p-3 font-semibold text-slate-800">{m.month}</td>
-                                <td className="p-3 text-emerald-700 font-semibold">{m.positive}</td>
-                                <td className="p-3 text-slate-500">{m.neutral}</td>
-                                <td className="p-3 text-rose-600 font-semibold">{m.negative}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </SectionCard>
-
-                    <SectionCard title="Peak Review Days" sub="Days of the week with highest review activity.">
-                      <div className="space-y-2">
-                        {feedbackAnalytics.peakReviewDays.map(d => {
-                          const maxD = Math.max(...feedbackAnalytics.peakReviewDays.map(x => x.count), 1);
-                          const pct = Math.round((d.count / maxD) * 100);
-                          return (
-                            <div key={d.dayName} className="flex items-center gap-3 text-sm">
-                              <span className="w-24 text-xs text-slate-500 shrink-0">{d.dayName.trim()}</span>
-                              <div className="flex-1 bg-slate-100 rounded-full h-3">
-                                <div className="h-3 rounded-full bg-amber-400" style={{ width: `${pct}%` }} />
-                              </div>
-                              <span className="w-8 text-xs text-slate-600 text-right font-semibold">{d.count}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </SectionCard>
-                  </div>
-                </div>
-              )}
-
-              {/* ─ Satisfaction ─ */}
-              {feedbackSubTab === 'satisfaction' && feedbackAnalytics && (
-                <div className="space-y-6">
-                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    <StatCard label="Average Rating" value={`${feedbackAnalytics.averageRating} ★`} tone="text-hold" />
-                    <StatCard label="Positive %" value={`${feedbackAnalytics.positivePercent}%`} tone="text-free" sub={`${feedbackAnalytics.positiveCount} reviews`} />
-                    <StatCard label="Neutral %" value={`${feedbackAnalytics.neutralPercent}%`} tone="text-ink-soft" sub={`${feedbackAnalytics.neutralCount} reviews`} />
-                    <StatCard label="Negative %" value={`${feedbackAnalytics.negativePercent}%`} tone="text-busy" sub={`${feedbackAnalytics.negativeCount} reviews`} />
-                  </div>
-
-                  <SectionCard title="Monthly Satisfaction Breakdown" sub="Month-by-month positive, neutral, and negative review counts.">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm text-left">
-                        <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                          <tr>
-                            <th className="p-3">Month</th>
-                            <th className="p-3">Total</th>
-                            <th className="p-3 text-emerald-600">Positive</th>
-                            <th className="p-3 text-slate-500">Neutral</th>
-                            <th className="p-3 text-rose-600">Negative</th>
-                            <th className="p-3">Satisfaction %</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {feedbackAnalytics.monthlySatisfaction.map(m => {
-                            const pct = m.total === 0 ? 0 : Math.round((m.positive / m.total) * 100);
-                            return (
-                              <tr key={m.month} className="hover:bg-slate-50">
-                                <td className="p-3 font-semibold text-slate-800">{m.month}</td>
-                                <td className="p-3 text-slate-700">{m.total}</td>
-                                <td className="p-3 text-emerald-700 font-semibold">{m.positive}</td>
-                                <td className="p-3 text-slate-500">{m.neutral}</td>
-                                <td className="p-3 text-rose-600 font-semibold">{m.negative}</td>
-                                <td className="p-3">
-                                  <div className="flex items-center gap-2">
-                                    <div className="w-20 bg-slate-100 rounded-full h-2">
-                                      <div className="h-2 rounded-full bg-emerald-400" style={{ width: `${pct}%` }} />
-                                    </div>
-                                    <span className={`text-xs font-bold ${pct >= 70 ? 'text-emerald-700' : pct >= 50 ? 'text-amber-600' : 'text-rose-600'}`}>{pct}%</span>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </SectionCard>
-                </div>
-              )}
-
-              {/* ─ Reputation ─ */}
-              {feedbackSubTab === 'reputation' && feedbackAnalytics && (
-                <div className="space-y-6">
-                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    <div className="rounded-2xl border border-slate-200 bg-white/80 p-5 text-center shadow-sm">
-                      <p className="text-sm text-slate-500">Reputation Score</p>
-                      <p className={`mt-2 text-5xl font-bold ${feedbackAnalytics.reputationScore >= 70 ? 'text-emerald-700' : feedbackAnalytics.reputationScore >= 50 ? 'text-amber-600' : 'text-rose-600'}`}>{feedbackAnalytics.reputationScore}</p>
-                      <p className="mt-1 text-xs text-slate-400">out of 100</p>
-                    </div>
-                    <StatCard label="Average Rating" value={`${feedbackAnalytics.averageRating} ★`} tone="text-hold" sub={`Trend: ${feedbackAnalytics.ratingTrendDirection === 'up' ? '↑ Improving' : feedbackAnalytics.ratingTrendDirection === 'down' ? '↓ Declining' : '→ Stable'}`} />
-                    <StatCard label="5-Star Reviews" value={feedbackAnalytics.fiveStarCount} tone="text-free" sub={`${feedbackAnalytics.totalReviews === 0 ? 0 : Math.round((feedbackAnalytics.fiveStarCount / feedbackAnalytics.totalReviews) * 100)}% of total`} />
-                    <StatCard label="1-Star Reviews" value={feedbackAnalytics.oneStarCount} tone="text-busy" sub={`${feedbackAnalytics.totalReviews === 0 ? 0 : Math.round((feedbackAnalytics.oneStarCount / feedbackAnalytics.totalReviews) * 100)}% of total`} />
-                  </div>
-
-                  <div className="grid gap-6 xl:grid-cols-2">
-                    <SectionCard title="Monthly Rating Trend" sub="Average rating per month — tracks reputation over time.">
-                      <div className="space-y-2">
-                        {feedbackAnalytics.ratingTrend.map(m => (
-                          <div key={m.month} className="flex items-center gap-3 text-sm">
-                            <span className="w-20 text-xs text-slate-500 shrink-0">{m.month}</span>
-                            <div className="flex-1 bg-slate-100 rounded-full h-3">
-                              <div className={`h-3 rounded-full ${m.avgRating >= 4 ? 'bg-emerald-400' : m.avgRating >= 3 ? 'bg-amber-400' : 'bg-rose-400'}`} style={{ width: `${(m.avgRating / 5) * 100}%` }} />
-                            </div>
-                            <span className="w-14 text-xs text-right font-bold text-amber-600">{m.avgRating.toFixed(1)} ★</span>
-                          </div>
-                        ))}
-                      </div>
-                    </SectionCard>
-
-                    <SectionCard title="Review Volume by Month" sub="Total reviews per month — higher volume signals growing engagement.">
-                      <div className="space-y-2">
-                        {feedbackAnalytics.monthlyReviews.map(m => {
-                          const maxM = Math.max(...feedbackAnalytics.monthlyReviews.map(x => x.count), 1);
-                          const pct = Math.round((m.count / maxM) * 100);
-                          return (
-                            <div key={m.month} className="flex items-center gap-3 text-sm">
-                              <span className="w-20 text-xs text-slate-500 shrink-0">{m.month}</span>
-                              <div className="flex-1 bg-slate-100 rounded-full h-3">
-                                <div className="h-3 rounded-full bg-sky-400" style={{ width: `${pct}%` }} />
-                              </div>
-                              <span className="w-8 text-xs text-slate-600 text-right font-semibold">{m.count}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </SectionCard>
-
-                    <SectionCard title="Negative Review Growth" sub="Change in negative reviews vs prior period — early warning for reputation risk.">
-                      <div className="flex flex-col items-center justify-center py-6">
-                        <p className={`text-6xl font-bold ${feedbackAnalytics.negativeGrowthPercent > 10 ? 'text-rose-600' : feedbackAnalytics.negativeGrowthPercent < 0 ? 'text-emerald-700' : 'text-amber-600'}`}>
-                          {feedbackAnalytics.negativeGrowthPercent >= 0 ? '+' : ''}{feedbackAnalytics.negativeGrowthPercent}%
-                        </p>
-                        <p className="mt-2 text-sm text-slate-500">negative review growth (last 30 days vs prior 30)</p>
-                        <p className="mt-1 text-xs text-slate-400">
-                          {feedbackAnalytics.negativeGrowthPercent > 10 ? '⚠️ Increasing — investigate causes' : feedbackAnalytics.negativeGrowthPercent < 0 ? '✅ Improving — keep it up' : '→ Stable'}
-                        </p>
-                      </div>
-                    </SectionCard>
-
-                    <SectionCard title="Sentiment Trend by Month" sub="Positive vs negative review trend for reputation monitoring.">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm text-left">
-                          <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                            <tr><th className="p-3">Month</th><th className="p-3 text-emerald-600">Positive</th><th className="p-3 text-rose-600">Negative</th><th className="p-3">Ratio</th></tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {feedbackAnalytics.sentimentTrend.map(m => {
-                              const tot = m.positive + m.negative + m.neutral || 1;
-                              return (
-                                <tr key={m.month} className="hover:bg-slate-50">
-                                  <td className="p-3 font-semibold text-slate-800">{m.month}</td>
-                                  <td className="p-3 text-emerald-700 font-semibold">{m.positive}</td>
-                                  <td className="p-3 text-rose-600 font-semibold">{m.negative}</td>
-                                  <td className="p-3 text-xs text-slate-500">{Math.round((m.positive / tot) * 100)}% positive</td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </SectionCard>
-                  </div>
                 </div>
               )}
 

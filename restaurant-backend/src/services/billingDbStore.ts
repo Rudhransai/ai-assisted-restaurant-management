@@ -88,6 +88,109 @@ export class BillingDbStore {
 
     await this.pool.query('CREATE INDEX IF NOT EXISTS idx_invoices_order ON invoices (order_id)');
     await this.pool.query('CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments (invoice_id)');
+
+    await this.seedRecipes();
+  }
+
+  /**
+   * Give every seeded dish a recipe so order-time inventory deduction works out of the
+   * box. A dish that already has ANY recipe lines is left completely alone — the
+   * manager's own entries always win; only dishes with no recipe at all are filled in.
+   * Ingredients are matched by name and created (with sensible stock levels) when
+   * missing.
+   */
+  private async seedRecipes() {
+    const covered = await this.pool.query('SELECT DISTINCT dish_id FROM dish_ingredients');
+    const dishesWithRecipes = new Set<string>(covered.rows.map((r: any) => r.dish_id));
+
+    // name -> [unit, currentStock, minimumStock, costPerUnit] for ingredients we may need to create
+    const ingredientDefaults: Record<string, [string, number, number, number]> = {
+      'Rice': ['kg', 50, 10, 60], 'Chicken': ['kg', 30, 8, 200], 'Tomato': ['kg', 15, 5, 40],
+      'Onion': ['kg', 20, 5, 30], 'Oil': ['L', 10, 3, 120], 'Eggs': ['pieces', 100, 20, 8],
+      'Salt': ['kg', 5, 1, 20], 'Garlic': ['kg', 3, 1, 80],
+      'Flour': ['kg', 40, 8, 45], 'Bread': ['pieces', 60, 15, 12], 'Mozzarella': ['kg', 12, 3, 450],
+      'Pasta': ['kg', 20, 5, 90], 'Butter': ['kg', 10, 2, 500], 'Milk': ['L', 30, 8, 60],
+      'Sugar': ['kg', 15, 4, 45], 'Potato': ['kg', 40, 10, 35], 'Fish': ['kg', 15, 4, 350],
+      'Chocolate': ['kg', 8, 2, 400], 'Cream': ['L', 8, 2, 180], 'Lettuce': ['kg', 10, 3, 70],
+      'Lemon': ['pieces', 80, 20, 5], 'Mixed Vegetables': ['kg', 25, 6, 50],
+      'Tea Leaves': ['kg', 3, 1, 300], 'Fruit': ['kg', 20, 5, 80], 'Wine': ['L', 12, 3, 600],
+      'Ice Cream': ['L', 15, 4, 200], 'Cheese': ['kg', 10, 3, 400],
+    };
+
+    // dish name -> [ingredient name, quantity per serving]
+    const recipes: Record<string, Array<[string, number]>> = {
+      'Soup of the Day': [['Mixed Vegetables', 0.15], ['Onion', 0.05], ['Garlic', 0.01], ['Oil', 0.02], ['Salt', 0.005]],
+      'Garlic Bread': [['Bread', 2], ['Butter', 0.02], ['Garlic', 0.015]],
+      'Bruschetta': [['Bread', 2], ['Tomato', 0.1], ['Oil', 0.015], ['Garlic', 0.005]],
+      'Caesar Salad': [['Lettuce', 0.15], ['Cheese', 0.03], ['Bread', 1], ['Eggs', 1], ['Oil', 0.02]],
+      'Margherita Pizza': [['Flour', 0.25], ['Mozzarella', 0.15], ['Tomato', 0.12], ['Oil', 0.02]],
+      'Pasta Carbonara': [['Pasta', 0.12], ['Eggs', 2], ['Cheese', 0.04], ['Oil', 0.01]],
+      'Grilled Chicken': [['Chicken', 0.25], ['Mixed Vegetables', 0.12], ['Lemon', 1], ['Oil', 0.02], ['Salt', 0.005]],
+      'Veg Burger': [['Bread', 1], ['Lettuce', 0.03], ['Tomato', 0.05], ['Mixed Vegetables', 0.1], ['Oil', 0.02]],
+      'Fish & Chips': [['Fish', 0.2], ['Potato', 0.25], ['Flour', 0.05], ['Oil', 0.1]],
+      'Chocolate Lava Cake': [['Chocolate', 0.08], ['Flour', 0.05], ['Eggs', 1], ['Butter', 0.03], ['Sugar', 0.04]],
+      'Ice Cream Sundae': [['Ice Cream', 0.2], ['Chocolate', 0.03], ['Cream', 0.05]],
+      'Cheesecake': [['Cheese', 0.1], ['Sugar', 0.05], ['Butter', 0.03], ['Flour', 0.03], ['Eggs', 1]],
+      'Lemonade': [['Lemon', 2], ['Sugar', 0.03]],
+      'Masala Chai': [['Tea Leaves', 0.005], ['Milk', 0.15], ['Sugar', 0.02]],
+      'Fresh Juice': [['Fruit', 0.3]],
+      'House Wine (glass)': [['Wine', 0.15]],
+    };
+
+    const dishRows = await this.pool.query('SELECT id, name FROM dishes');
+    const dishByName = new Map<string, string>(dishRows.rows.map((r: any) => [r.name, r.id]));
+
+    const ingRows = await this.pool.query('SELECT id, name FROM ingredients');
+    const ingByName = new Map<string, string>(ingRows.rows.map((r: any) => [r.name, r.id]));
+
+    // Only ingredients needed by dishes we are actually going to fill in.
+    const dishesToSeed = Object.entries(recipes).filter(([dishName]) => {
+      const dishId = dishByName.get(dishName);
+      return dishId !== undefined && !dishesWithRecipes.has(dishId);
+    });
+    if (dishesToSeed.length === 0) return;
+
+    let created = 0;
+    let idSeq = Date.now();
+    for (const [, lines] of dishesToSeed) {
+      for (const [ingName] of lines) {
+        if (ingByName.has(ingName)) continue;
+        const [unit, stock, minimum, cost] = ingredientDefaults[ingName] ?? ['kg', 10, 2, 50];
+        const newId = `ing${idSeq++}`;
+        await this.pool.query(
+          'INSERT INTO ingredients (id, name, unit, current_stock, minimum_stock, cost_per_unit, vendor_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+          [newId, ingName, unit, stock, minimum, cost, '']
+        );
+        await this.pool.query(
+          `INSERT INTO stock_entries (id, ingredient_id, ingredient_name, entry_type, quantity, date, notes)
+           VALUES ($1,$2,$3,'opening',$4,$5,'Initial stock (recipe seed)')`,
+          [`se_seed_${idSeq}`, newId, ingName, stock, new Date().toISOString().slice(0, 10)]
+        );
+        ingByName.set(ingName, newId);
+        created++;
+      }
+    }
+
+    let seeded = 0;
+    for (const [dishName, lines] of dishesToSeed) {
+      const dishId = dishByName.get(dishName);
+      if (!dishId) continue;
+      for (const [ingName, qty] of lines) {
+        const ingredientId = ingByName.get(ingName);
+        if (!ingredientId) continue;
+        await this.pool.query(
+          `INSERT INTO dish_ingredients (id, dish_id, ingredient_id, quantity_per_serving)
+           VALUES ($1,$2,$3,$4)
+           ON CONFLICT (dish_id, ingredient_id) DO NOTHING`,
+          [`di${idSeq++}`, dishId, ingredientId, qty]
+        );
+        seeded++;
+      }
+    }
+
+    if (seeded > 0) {
+      console.log(`[Billing] Seeded ${seeded} recipe line(s) across ${dishesToSeed.length} dishes (${created} new ingredient(s)).`);
+    }
   }
 
   // ── Recipes ────────────────────────────────────────────────────────────────
@@ -316,7 +419,9 @@ export class BillingDbStore {
 
       await client.query("UPDATE orders SET status = 'paid' WHERE id = $1", [invoice.orderId]);
 
-      deducted = await this.deductInventory(client, invoice.orderId, invoice.invoiceNumber, paidAt);
+      // Inventory is NOT deducted here. Stock is consumed when the order is placed
+      // (RestaurantDbStore.createOrder) — the kitchen uses the ingredients long before
+      // the bill is settled. Deducting again on payment would double-count.
 
       await client.query('COMMIT');
     } catch (err) {
@@ -332,66 +437,6 @@ export class BillingDbStore {
     );
 
     return { ok: true as const, alreadyProcessed: false as const, invoice, deducted };
-  }
-
-  /**
-   * Subtract the ingredients used by every item on the order, and log each subtraction
-   * as a stock entry so the inventory reports still add up.
-   *
-   * Dishes with no recipe are skipped and reported — that is a data gap, not an error,
-   * and it must not block a payment that has already been taken.
-   */
-  private async deductInventory(client: any, orderId: string, invoiceNumber: string, at: string) {
-    const itemsResult = await client.query(
-      'SELECT dish_id AS "dishId", dish_name AS "dishName", quantity FROM order_items WHERE order_id = $1',
-      [orderId]
-    );
-
-    const deducted: Array<{ ingredientName: string; quantity: number; unit: string }> = [];
-
-    for (const item of itemsResult.rows) {
-      const recipeResult = await client.query(
-        `SELECT di.ingredient_id AS "ingredientId", di.quantity_per_serving::float AS "perServing",
-                i.name AS "ingredientName", i.unit
-           FROM dish_ingredients di
-           JOIN ingredients i ON i.id = di.ingredient_id
-          WHERE di.dish_id = $1`,
-        [item.dishId]
-      );
-
-      if (recipeResult.rows.length === 0) {
-        console.warn(`[Billing] No recipe for dish "${item.dishName}" — inventory not deducted.`);
-        continue;
-      }
-
-      for (const line of recipeResult.rows) {
-        const used = Number(line.perServing) * Number(item.quantity);
-        if (!used) continue;
-
-        await client.query(
-          'UPDATE ingredients SET current_stock = GREATEST(current_stock - $1, 0) WHERE id = $2',
-          [used, line.ingredientId]
-        );
-
-        await client.query(
-          `INSERT INTO stock_entries (id, ingredient_id, ingredient_name, entry_type, quantity, date, notes)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [
-            `se_${Date.now()}_${line.ingredientId}`,
-            line.ingredientId,
-            line.ingredientName,
-            'consumption',
-            used,
-            at.slice(0, 10),
-            `Auto-deducted for ${invoiceNumber}`,
-          ]
-        );
-
-        deducted.push({ ingredientName: line.ingredientName, quantity: used, unit: line.unit });
-      }
-    }
-
-    return deducted;
   }
 
   private async sendReceipt(

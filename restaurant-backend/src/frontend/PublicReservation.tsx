@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+
+type PublicTable = { id: string; tableNumber: string; capacity: number; zone: string };
 
 export function PublicReservation() {
   const [form, setForm] = useState({
@@ -7,7 +9,16 @@ export function PublicReservation() {
     phone: '',
     time: '20:00',
     partySize: '2',
+    preferredTableId: '',
   });
+  const [tables, setTables] = useState<PublicTable[]>([]);
+
+  useEffect(() => {
+    fetch('/api/v1/public/tables')
+      .then((r) => r.json())
+      .then((p) => { if (Array.isArray(p?.data)) setTables(p.data); })
+      .catch(() => undefined); // the picker is optional — the form works without it
+  }, []);
   const [status, setStatus] = useState<{ kind: 'idle' | 'ok' | 'error'; message?: string }>({
     kind: 'idle',
   });
@@ -28,6 +39,7 @@ export function PublicReservation() {
           phone: form.phone,
           time: form.time,
           partySize: Number(form.partySize),
+          preferredTableId: form.preferredTableId,
         }),
       });
 
@@ -45,7 +57,7 @@ export function PublicReservation() {
           : "Booking received. We'll be in touch shortly to confirm.",
       });
 
-      setForm({ guestName: '', email: '', phone: '', time: '20:00', partySize: '2' });
+      setForm({ guestName: '', email: '', phone: '', time: '20:00', partySize: '2', preferredTableId: '' });
     } catch (err: any) {
       setStatus({ kind: 'error', message: err?.message ?? String(err) });
     } finally {
@@ -100,6 +112,18 @@ export function PublicReservation() {
               <label htmlFor="email" className="eyebrow">Email <span className="font-normal normal-case tracking-normal text-ink-soft">(optional)</span></label>
               <input id="email" value={form.email} type="email" autoComplete="email"
                 onChange={(e) => setForm({ ...form, email: e.target.value })} className={field} />
+            </div>
+
+            <div className="sm:col-span-2">
+              <label htmlFor="preferredTable" className="eyebrow">Preferred table <span className="font-normal normal-case tracking-normal text-ink-soft">(optional)</span></label>
+              <select id="preferredTable" value={form.preferredTableId}
+                onChange={(e) => setForm({ ...form, preferredTableId: e.target.value })} className={field}>
+                <option value="">No preference — seat me anywhere</option>
+                {tables.map((t) => (
+                  <option key={t.id} value={t.id}>Table {t.tableNumber} · {t.zone} · seats {t.capacity}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-ink-soft">We'll do our best — if your table is taken, you get the next best match.</p>
             </div>
           </div>
 

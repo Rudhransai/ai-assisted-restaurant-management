@@ -545,6 +545,118 @@ export class StaffDbStore {
     return r.rows[0] as AttendanceRecord;
   }
 
+  // ── Employee self-service ───────────────────────────────────────────────────
+  // Attendance, leave and availability are the employee's own actions. They identify
+  // themselves with their employee code (a kiosk-style flow — no separate login), and
+  // records are stamped markedBy 'Self' so the manager can see who entered what.
+
+  async getEmployeeByCode(employeeCode: string): Promise<Employee | null> {
+    const r = await this.pool.query(
+      `SELECT id, employee_code AS "employeeCode", full_name AS "fullName", role, phone_number AS "phoneNumber", status
+       FROM employees WHERE LOWER(employee_code) = LOWER($1)`,
+      [employeeCode.trim()]
+    );
+    return (r.rows[0] as Employee) ?? null;
+  }
+
+  /** Everything the employee portal needs in one call. */
+  async getSelfStatus(employeeCode: string) {
+    const employee = await this.getEmployeeByCode(employeeCode);
+    if (!employee) return null;
+
+    const today = new Date().toISOString().split('T')[0];
+
+    const attendance = await this.pool.query(
+      `SELECT a.id, a.check_in AS "checkIn", a.check_out AS "checkOut", a.attendance_status AS "attendanceStatus",
+              a.working_hours::float AS "workingHours", s.shift_name AS "shiftName"
+       FROM attendance a LEFT JOIN shifts s ON s.id = a.shift_id
+       WHERE a.employee_id = $1 AND a.attendance_date = $2`,
+      [employee.id, today]
+    );
+
+    const schedule = await this.pool.query(
+      `SELECT ss.shift_date AS "shiftDate", s.shift_name AS "shiftName", s.start_time AS "startTime", s.end_time AS "endTime"
+       FROM shift_schedule ss JOIN shifts s ON s.id = ss.shift_id
+       WHERE ss.employee_id = $1 AND ss.shift_date >= $2
+       ORDER BY ss.shift_date LIMIT 7`,
+      [employee.id, today]
+    );
+
+    const leave = await this.pool.query(
+      `SELECT id, leave_type AS "leaveType", start_date AS "startDate", end_date AS "endDate", reason, status
+       FROM leave_requests WHERE employee_id = $1 ORDER BY start_date DESC LIMIT 5`,
+      [employee.id]
+    );
+
+    return {
+      employee,
+      todayAttendance: attendance.rows[0] ?? null,
+      upcomingShifts: schedule.rows,
+      recentLeave: leave.rows,
+    };
+  }
+
+  async selfCheckIn(employeeCode: string): Promise<AttendanceRecord> {
+    const employee = await this.getEmployeeByCode(employeeCode);
+    if (!employee) throw new Error('No employee found with that code');
+    if (employee.status !== 'Active') throw new Error('This employee is not active');
+
+    const today = new Date().toISOString().split('T')[0] ?? '';
+    const existing = await this.pool.query(
+      'SELECT id FROM attendance WHERE employee_id = $1 AND attendance_date = $2',
+      [employee.id, today]
+    );
+    if (existing.rows.length > 0) throw new Error('Already checked in today — use check-out instead');
+
+    // Today's assigned shift (if any) drives late/overtime maths.
+    const shiftRes = await this.pool.query(
+      'SELECT shift_id FROM shift_schedule WHERE employee_id = $1 AND shift_date = $2',
+      [employee.id, today]
+    );
+    const shiftId = shiftRes.rows[0]?.shift_id ?? '';
+
+    const now = new Date();
+    const checkIn = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    return this.markAttendance({
+      employeeId: employee.id, attendanceDate: today, checkIn, checkOut: '',
+      breakMinutes: 30, attendanceStatus: 'Present', markedBy: 'Self', shiftId,
+    });
+  }
+
+  async selfCheckOut(employeeCode: string): Promise<AttendanceRecord> {
+    const employee = await this.getEmployeeByCode(employeeCode);
+    if (!employee) throw new Error('No employee found with that code');
+
+    const today = new Date().toISOString().split('T')[0] ?? '';
+    const existing = await this.pool.query(
+      'SELECT check_in AS "checkIn", break_minutes AS "breakMinutes", shift_id AS "shiftId" FROM attendance WHERE employee_id = $1 AND attendance_date = $2',
+      [employee.id, today]
+    );
+    const row = existing.rows[0];
+    if (!row || !row.checkIn) throw new Error('Check in first — no check-in found for today');
+
+    const now = new Date();
+    const checkOut = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    return this.markAttendance({
+      employeeId: employee.id, attendanceDate: today, checkIn: row.checkIn, checkOut,
+      breakMinutes: row.breakMinutes ?? 30, attendanceStatus: 'Present', markedBy: 'Self', shiftId: row.shiftId ?? '',
+    });
+  }
+
+  async selfAddLeave(employeeCode: string, data: { leaveType: string; startDate: string; endDate: string; reason: string }) {
+    const employee = await this.getEmployeeByCode(employeeCode);
+    if (!employee) throw new Error('No employee found with that code');
+    return this.addLeaveRequest({ employeeId: employee.id, ...data });
+  }
+
+  async selfAddAvailability(employeeCode: string, data: { availableFrom: string; availableTo: string; status: 'Available' | 'Unavailable'; remarks: string }) {
+    const employee = await this.getEmployeeByCode(employeeCode);
+    if (!employee) throw new Error('No employee found with that code');
+    return this.addAvailability({ employeeId: employee.id, ...data });
+  }
+
   // ── Payroll ─────────────────────────────────────────────────────────────────
 
   async getPayrollSummaries(): Promise<PayrollSummary[]> {
