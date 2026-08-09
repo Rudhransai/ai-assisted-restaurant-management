@@ -8,18 +8,39 @@ export function renderRestaurantMailContent(params: {
   orderTotal?: string;
   orderItems?: string;
   orderId?: string;
+  /** Reservation id shown as a booking reference the guest can quote. */
+  reference?: string;
+  /** Reminder only: one-tap attendance links. */
+  confirmUrl?: string;
+  cancelUrl?: string;
 }): string {
   const name = params.guestName ? ` ${params.guestName}` : '';
   if (params.action === 'waitlist_notified') {
     return `Hi${name}! You have been notified. Please proceed with your table assignment at the restaurant.`;
   }
   if (params.action === 'reservation_reminder') {
-    return `Hi${name}! This is your reservation reminder${params.time ? ` for ${params.time}` : ''}. See you soon!`;
+    const lines = [
+      `Hi${name},`,
+      '',
+      `This is a reminder for your table reservation${params.time ? ` at ${params.time}` : ' today'}.`,
+    ];
+    if (params.confirmUrl && params.cancelUrl) {
+      lines.push(
+        '',
+        'Are you still coming? Please confirm your attendance by clicking one of the options below:',
+        '',
+        `👍 Yes, I am coming: ${params.confirmUrl}`,
+        `❌ No, I need to cancel: ${params.cancelUrl}`
+      );
+    }
+    lines.push('', 'Thank you, see you soon!');
+    return lines.join('\n');
   }
   if (params.action === 'reservation_confirmed') {
-    const party = params.partySize ? ` for ${params.partySize}` : '';
-    const table = params.tableNumber ? ` (table ${params.tableNumber})` : '';
-    return `Hi${name}! Your table${party}${table} is confirmed${params.time ? ` at ${params.time}` : ''}. We look forward to seeing you.`;
+    const party = params.partySize ? ` Party Size: ${params.partySize}.` : '';
+    const table = params.tableNumber ? ` Table: ${params.tableNumber}.` : '';
+    const ref = params.reference ? ` Ref: ${params.reference}.` : '';
+    return `Hi${name}, your reservation is confirmed!${params.time ? ` Time: ${params.time}.` : ''}${party}${table}${ref} We look forward to seeing you.`;
   }
   if (params.action === 'low_stock_alert') {
     return [

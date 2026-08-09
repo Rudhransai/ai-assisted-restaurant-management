@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import { sendWhatsAppCloud, type WhatsAppTemplate } from './whatsappCloud';
+import { sendWhatsAppWeb } from './whatsappWeb';
 
 export type NotificationType = 'mail' | 'whatsapp' | 'sms';
 
@@ -140,6 +141,19 @@ export async function sendNotification(
       console.error('[NotificationSender] mail send failed', err?.message ?? err);
       return { ok: false, provider: 'smtp', error: err?.message ?? String(err) };
     }
+  }
+
+  // ── WHATSAPP (WhatsApp Web — no templates, free-form messages) ─────────────
+  // WHATSAPP_PROVIDER=web drives a linked WhatsApp account through whatsapp-web.js.
+  // The full message text goes out as-is — no Meta template approval involved.
+  if (input.type === 'whatsapp' && env('WHATSAPP_PROVIDER') === 'web') {
+    const result = await sendWhatsAppWeb({ to: input.recipient, body: input.content });
+    return {
+      ok: result.ok,
+      provider: result.provider,
+      ...(result.messageId ? { messageId: result.messageId } : {}),
+      ...(result.error ? { error: result.error } : {}),
+    };
   }
 
   // ── WHATSAPP (Meta Cloud API — default provider) ───────────────────────────

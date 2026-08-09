@@ -741,10 +741,10 @@ export function Dashboard() {
                         <td className="p-4">{formatReservationTime(r.time)}</td>
                         <td className="p-4 font-mono">{r.tableId}</td>
                         <td className="p-4 text-slate-500">{r.phone}</td>
-                        <td className="p-4"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${r.status === 'No-show' ? 'bg-rose-100 text-rose-800' : r.status === 'Seated' ? 'bg-emerald-100 text-emerald-800' : 'bg-sky-100 text-sky-800'}`}>{r.status}</span></td>
+                        <td className="p-4"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${r.status === 'No-show' || r.status === 'Cancelled' ? 'bg-rose-100 text-rose-800' : r.status === 'Seated' || r.status === 'Confirmed' ? 'bg-emerald-100 text-emerald-800' : 'bg-sky-100 text-sky-800'}`}>{r.status}</span></td>
                         <td className="p-4"><span className={`text-xs font-medium ${r.reminderSent ? 'text-emerald-700' : 'text-slate-400'}`}>{r.reminderSent ? '✓ Sent' : 'Pending'}</span></td>
                         <td className="p-4">
-                          {r.status === 'Reserved' && <button onClick={() => void handleMarkNoShow(r.id)} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 cursor-pointer">No-show</button>}
+                          {(r.status === 'Reserved' || r.status === 'Confirmed') && <button onClick={() => void handleMarkNoShow(r.id)} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 cursor-pointer">No-show</button>}
                         </td>
                       </tr>
                     ))}

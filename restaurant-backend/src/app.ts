@@ -820,6 +820,55 @@ app.delete('/api/v1/recipes/:id', requireAuth(['manager']), async (req, res, nex
 });
 
 /**
+ * One-tap reservation confirm/cancel, opened from the WhatsApp/email reminder links.
+ * Public on purpose — the guest is not logged in; the reservation id is the reference
+ * they were sent.
+ */
+app.get('/reserve/confirm', async (req, res, next) => {
+  try {
+    const id = String(req.query.id ?? '');
+    const status = req.query.status === 'cancelled' ? 'Cancelled' : 'Confirmed';
+    if (!id) {
+      res.status(400).send('<h1>Missing reservation reference</h1>');
+      return;
+    }
+
+    const updated = await pool.query(
+      "UPDATE reservations SET status = $1 WHERE id = $2 AND status IN ('Reserved', 'Confirmed', 'Cancelled') RETURNING guest_name AS \"guestName\", reservation_time AS time",
+      [status, id]
+    );
+    const row = updated.rows[0];
+
+    const ok = status === 'Confirmed';
+    const heading = !row
+      ? 'Reservation not found'
+      : ok
+        ? 'See you soon! 🎉'
+        : 'Reservation cancelled';
+    const message = !row
+      ? 'This link is invalid or the reservation has already been seated.'
+      : ok
+        ? `Thanks${row.guestName ? `, ${row.guestName}` : ''} — your table is confirmed. We look forward to serving you.`
+        : `Your reservation has been cancelled${row.guestName ? `, ${row.guestName}` : ''}. We hope to see you another time.`;
+
+    res.type('html').send(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>${heading}</title>
+<style>
+ body{margin:0;background:#EFF1EE;color:#101418;font-family:system-ui,sans-serif;
+      display:flex;min-height:100vh;align-items:center;justify-content:center;padding:16px}
+ .card{background:#fff;border:1px solid #D8DCD6;border-radius:8px;padding:28px;max-width:380px;width:100%;text-align:center}
+ h1{font-size:24px;margin:0 0 12px}
+ p{color:#3B4149;font-size:15px;line-height:1.6;margin:0}
+</style></head><body>
+<div class="card"><h1>${heading}</h1><p>${message}</p></div>
+</body></html>`);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * Mock payment gateway. Public on purpose — the customer opens this from the QR code
  * and is not logged in. The unguessable token is what protects it.
  */
@@ -974,6 +1023,13 @@ app.listen(PORT, async () => {
     await applyForeignKeys(pool);
     activeStore = dbStore;
     console.log(`Server successfully booted up on port ${PORT} using PostgreSQL`);
+
+    // WhatsApp Web provider: connect at boot so the QR prompt (first run only) appears
+    // in this terminal instead of delaying the first customer notification.
+    if (process.env.WHATSAPP_PROVIDER === 'web') {
+      const { initWhatsAppWeb } = await import('./integrations/whatsappWeb');
+      void initWhatsAppWeb();
+    }
 
     const scheduler = new ReminderScheduler(pool);
     scheduler.start();

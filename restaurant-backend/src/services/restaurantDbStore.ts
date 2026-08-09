@@ -584,6 +584,7 @@ export class RestaurantDbStore {
         time: displayTime,
         partySize: data.partySize,
         tableNumber,
+        reference: reservationId,
       }),
       subject: mailSubject('reservation_confirmed'),
       template: {
@@ -924,10 +925,15 @@ export class RestaurantDbStore {
 
     for (const reservation of due) {
       const reminderTime = formatReservationTime(reservation.time);
+      // One-tap attendance links, like a real booking system. PUBLIC_BASE_URL must be
+      // reachable from the guest's phone (LAN IP, not localhost) for these to work.
+      const base = (process.env.PUBLIC_BASE_URL || 'http://localhost:5000').replace(/\/$/, '');
       const content = renderRestaurantMailContent({
         guestName: reservation.guestName,
         action: 'reservation_reminder',
         time: reminderTime,
+        confirmUrl: `${base}/reserve/confirm?id=${reservation.id}&status=confirmed`,
+        cancelUrl: `${base}/reserve/confirm?id=${reservation.id}&status=cancelled`,
       });
 
       // Send via mail when possible; fall back to WhatsApp if mail fails or email is empty.
