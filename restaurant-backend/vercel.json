@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://YOUR-RENDER-URL.onrender.com/api/:path*" },
+    { "source": "/pay/:path*", "destination": "https://YOUR-RENDER-URL.onrender.com/pay/:path*" },
+    { "source": "/reserve/:path*", "destination": "https://YOUR-RENDER-URL.onrender.com/reserve/:path*" },
+    { "source": "/:path*", "destination": "/index.html" }
+  ]
+}
