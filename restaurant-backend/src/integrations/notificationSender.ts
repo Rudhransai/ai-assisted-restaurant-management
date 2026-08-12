@@ -148,7 +148,7 @@ export async function sendNotification(
   // service (npm run notify, its own terminal), which delivers it through the Meta
   // Cloud API as free-form text. No templates involved.
   if (input.type === 'whatsapp' && env('WHATSAPP_PROVIDER') === 'service') {
-    const serviceUrl = (env('WHATSAPP_SERVICE_URL') ?? 'http://localhost:5001').replace(/\/$/, '');
+    const serviceUrl = (env('WHATSAPP_SERVICE_URL') ?? 'http://localhost:5601').replace(/\/$/, '');
     try {
       const response = await fetch(`${serviceUrl}/send`, {
         method: 'POST',

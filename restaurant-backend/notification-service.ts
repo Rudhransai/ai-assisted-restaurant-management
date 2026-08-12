@@ -24,7 +24,9 @@ import { normalisePhone } from './src/integrations/whatsappCloud';
 const app = express();
 app.use(express.json());
 
-const PORT = Number(process.env.NOTIFY_PORT || 5001);
+// 5601, not 5001: Vite auto-increments 5000 → 5001 when its port is busy, and a second
+// dev-server instance would silently steal 5001 and answer sends with a 404.
+const PORT = Number(process.env.NOTIFY_PORT || 5601);
 const VERSION = process.env.WHATSAPP_API_VERSION || 'v21.0';
 
 app.get('/health', (_req, res) => {
