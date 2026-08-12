@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { Dashboard } from './Dashboard';
 import { PublicReservation } from './PublicReservation';
 import { EmployeePortal } from './EmployeePortal';
+import { Landing } from './Landing';
 import { Login } from './Login';
 import { Register } from './Register';
 import { CustomerDashboard } from './CustomerDashboard';
@@ -31,12 +32,13 @@ function AppRouter() {
     return <Register />;
   }
 
-  // If not logged in, redirect to login page
+  // Not logged in: visitors land on the public landing page; anything else
+  // that needs an account still routes through it.
   if (!user) {
-    if (path !== '/login') {
-      window.history.replaceState({}, '', '/login');
+    if (path !== '/') {
+      window.history.replaceState({}, '', '/');
     }
-    return <Login />;
+    return <Landing />;
   }
 
   // Redirect based on role
