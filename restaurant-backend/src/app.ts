@@ -662,16 +662,26 @@ app.post('/api/v1/public/reservation', async (req, res, next) => {
   }
 });
 
-// Table list for the public booking form, so guests can pick a preferred table.
+// Table list for the public booking form and the landing page's live availability.
+// Status is included so guests can see how busy the floor is before booking.
 app.get('/api/v1/public/tables', async (_req, res, next) => {
   try {
     const tables = await dbStore.getTables();
     res.json({
       success: true,
-      data: (tables as Array<{ id: string; tableNumber: string; capacity: number; zone: string }>).map(
-        ({ id, tableNumber, capacity, zone }) => ({ id, tableNumber, capacity, zone })
+      data: (tables as Array<{ id: string; tableNumber: string; capacity: number; zone: string; status: string }>).map(
+        ({ id, tableNumber, capacity, zone, status }) => ({ id, tableNumber, capacity, zone, status })
       ),
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Public menu for the landing page — same dishes the customer dashboard sells.
+app.get('/api/v1/public/menu', async (_req, res, next) => {
+  try {
+    res.json({ success: true, data: await dbStore.getDishes() });
   } catch (error) {
     next(error);
   }
