@@ -143,6 +143,20 @@ export async function sendNotification(
     }
   }
 
+  // ── WHATSAPP (direct free-form via Meta Cloud API — for cloud hosting) ─────
+  // WHATSAPP_PROVIDER=direct sends the free-form text straight from this process,
+  // no separate notification service. Same Meta call the service makes; used where
+  // running a second process is awkward (Render, Railway, etc.).
+  if (input.type === 'whatsapp' && env('WHATSAPP_PROVIDER') === 'direct') {
+    const result = await sendWhatsAppCloud({ to: input.recipient, body: input.content });
+    return {
+      ok: result.ok,
+      provider: 'meta-direct',
+      ...(result.messageId ? { messageId: result.messageId } : {}),
+      ...(result.error ? { error: result.error } : {}),
+    };
+  }
+
   // ── WHATSAPP (standalone notification service — the default) ──────────────
   // WHATSAPP_PROVIDER=service posts the message to the separate notification
   // service (npm run notify, its own terminal), which delivers it through the Meta

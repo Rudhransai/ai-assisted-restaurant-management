@@ -92,6 +92,10 @@ const executeWithFallback = async <T>(operation: (store: RestaurantStoreLike) =>
   }
 };
 
+// Behind a hosting proxy (Render, Railway, …) req.ip is the proxy unless we trust it —
+// and then every visitor shares one IP and locks each other out of the login limiter.
+app.set('trust proxy', 1);
+
 app.use(express.json());
 
 app.get('/api/v1/health', (_req, res) => {

@@ -1,0 +1,65 @@
+# Render blueprint — deploys the whole app (API + website + WhatsApp + reminders)
+# as ONE web service. Connect the repo at https://dashboard.render.com → New → Blueprint.
+#
+# The Express server serves the built React frontend itself, so no separate static
+# site is needed: one service, one public URL, and the QR-payment / reservation
+# confirm links all work because they share that URL (set PUBLIC_BASE_URL to it).
+#
+# WhatsApp uses WHATSAPP_PROVIDER=direct in the cloud: the backend calls the Meta
+# Cloud API itself (same free-form messages), so the separate `npm run notify`
+# terminal is a local-development thing only.
+
+services:
+  - type: web
+    name: restaurant-management
+    runtime: node
+    plan: free
+    rootDir: restaurant-backend
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm run start:server
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Postgres connection string — from Neon (neon.tech) or any hosted Postgres.
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: MANAGER_EMAIL
+        value: manager@restaurant.com
+      # Required in production — pick a strong one in the dashboard.
+      - key: MANAGER_PASSWORD
+        sync: false
+      # After the first deploy, set this to the service's own URL
+      # (https://<name>.onrender.com) so QR and confirm links point home.
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: RESTAURANT_NAME
+        value: Main Bistro
+      - key: WHATSAPP_PROVIDER
+        value: direct
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_API_VERSION
+        value: v21.0
+      - key: WHATSAPP_DEFAULT_COUNTRY
+        value: "91"
+      - key: MAIL_SMTP_HOST
+        value: smtp.gmail.com
+      - key: MAIL_SMTP_PORT
+        value: "587"
+      - key: MAIL_SMTP_USER
+        sync: false
+      - key: MAIL_SMTP_PASS
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: PAYMENT_WEBHOOK_SECRET
+        generateValue: true
+      - key: REMINDER_LEAD_MINUTES
+        value: "120"
+      # Leave AI_MODE unset in the cloud: the free instance (512 MB) cannot fit the
+      # local transformer models, so feedback falls back to the keyword classifier.
