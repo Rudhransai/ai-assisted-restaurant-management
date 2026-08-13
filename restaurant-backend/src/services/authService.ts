@@ -56,13 +56,19 @@ export class AuthService {
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
-        email TEXT UNIQUE NOT NULL,
+        email TEXT NOT NULL,
         password_hash TEXT NOT NULL,
         name TEXT NOT NULL,
         role TEXT NOT NULL,
         phone TEXT NOT NULL DEFAULT ''
       )
     `);
+
+    // One email may hold BOTH a customer and a manager account — the sign-in toggle
+    // picks which one. Uniqueness is per (email, role), not per email; the old
+    // single-column constraint from earlier installs is dropped on upgrade.
+    await this.pool.query('ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key');
+    await this.pool.query('CREATE UNIQUE INDEX IF NOT EXISTS users_email_role_idx ON users (email, role)');
 
     const managerEmail = process.env.MANAGER_EMAIL || 'manager@restaurant.com';
     const managerPassword = process.env.MANAGER_PASSWORD || 'manager123';
@@ -73,7 +79,7 @@ export class AuthService {
       );
     }
 
-    const existing = await this.pool.query('SELECT id FROM users WHERE email = $1', [managerEmail]);
+    const existing = await this.pool.query("SELECT id FROM users WHERE email = $1 AND role = 'manager'", [managerEmail]);
 
     if (existing.rows.length === 0) {
       const hash = await bcrypt.hash(managerPassword, 10);
@@ -94,9 +100,10 @@ export class AuthService {
     // route handler after it has checked the manager sign-up code.
     const role: UserRole = data.role === 'manager' ? 'manager' : 'customer';
 
-    const existing = await this.pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    // Same email + same role = duplicate; same email in the OTHER role is allowed.
+    const existing = await this.pool.query('SELECT id FROM users WHERE email = $1 AND role = $2', [email, role]);
     if (existing.rows.length > 0) {
-      throw new AppError(409, 'An account with this email already exists');
+      throw new AppError(409, `A ${role} account with this email already exists`);
     }
 
     const userId = `u${Date.now()}`;
@@ -112,23 +119,43 @@ export class AuthService {
 
   async login(email: string, password: string, expectedRole?: UserRole) {
     const normalizedEmail = email.trim().toLowerCase();
-    const result = await this.pool.query(
-      'SELECT id, email, password_hash, name, role, phone FROM users WHERE email = $1',
-      [normalizedEmail]
-    );
 
-    const user = result.rows[0];
+    // One email can hold a customer AND a manager account. When the caller picked a
+    // role (the sign-in toggle), only that account is considered; without a role,
+    // whichever account the password matches wins.
+    const result = expectedRole
+      ? await this.pool.query(
+          'SELECT id, email, password_hash, name, role, phone FROM users WHERE email = $1 AND role = $2',
+          [normalizedEmail, expectedRole]
+        )
+      : await this.pool.query(
+          'SELECT id, email, password_hash, name, role, phone FROM users WHERE email = $1',
+          [normalizedEmail]
+        );
+
+    if (result.rows.length === 0) {
+      if (expectedRole) {
+        // Friendlier than a bare 401: the email may exist under the other role.
+        const other = await this.pool.query('SELECT role FROM users WHERE email = $1 LIMIT 1', [normalizedEmail]);
+        if (other.rows.length > 0) {
+          throw new AppError(
+            403,
+            `This email is registered as a ${other.rows[0].role} — switch the toggle above to ${other.rows[0].role} and sign in there.`
+          );
+        }
+      }
+      throw new AppError(401, 'Invalid email or password');
+    }
+
+    let user: (typeof result.rows)[0] | undefined;
+    for (const candidate of result.rows) {
+      if (await bcrypt.compare(password, candidate.password_hash)) {
+        user = candidate;
+        break;
+      }
+    }
     if (!user) {
       throw new AppError(401, 'Invalid email or password');
-    }
-
-    const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) {
-      throw new AppError(401, 'Invalid email or password');
-    }
-
-    if (expectedRole && user.role !== expectedRole) {
-      throw new AppError(403, `This account is not registered as a ${expectedRole}`);
     }
 
     return this.buildAuthResponse({
