@@ -3,9 +3,9 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://YOUR-RENDER-URL.onrender.com/api/:path*" },
-    { "source": "/pay/:path*", "destination": "https://YOUR-RENDER-URL.onrender.com/pay/:path*" },
-    { "source": "/reserve/:path*", "destination": "https://YOUR-RENDER-URL.onrender.com/reserve/:path*" },
+    { "source": "/api/:path*", "destination": "https://ai-assisted-restaurant-management-production.up.railway.app/api/:path*" },
+    { "source": "/pay/:path*", "destination": "https://ai-assisted-restaurant-management-production.up.railway.app/pay/:path*" },
+    { "source": "/reserve/:path*", "destination": "https://ai-assisted-restaurant-management-production.up.railway.app/reserve/:path*" },
     { "source": "/:path*", "destination": "/index.html" }
   ]
 }

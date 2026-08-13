@@ -22,3 +22,6 @@ Thumbs.db
 # WhatsApp Web session — live credentials for the linked account, never commit
 .baileys_auth/
 
+
+# Local helper for pasting env vars into hosting dashboards — contains secrets
+railway-env.txt
