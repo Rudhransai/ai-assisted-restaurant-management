@@ -1,0 +1,18 @@
+# Railway (Nixpacks) build settings.
+#
+# NODE_ENV=production is set as a service variable, which would normally make
+# `npm ci` skip devDependencies — but the build itself needs vite/typescript/tsx,
+# so the install explicitly includes them. Node is pinned to 22 because Vite 8
+# and Express 5 need a modern runtime.
+
+[phases.setup]
+nixPkgs = ['nodejs_22']
+
+[phases.install]
+cmds = ['npm ci --include=dev']
+
+[phases.build]
+cmds = ['npm run build']
+
+[start]
+cmd = 'npm run start:server'
