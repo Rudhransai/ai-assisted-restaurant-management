@@ -112,8 +112,21 @@ const selfServiceLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 60, name: 
 
 app.post('/api/v1/auth/register', registerLimiter, async (req, res, next) => {
   try {
-    const { email, password, name, phone } = req.body ?? {};
-    const result = await authService.registerCustomer({ email, password, name, phone });
+    const { email, password, name, phone, role, managerCode } = req.body ?? {};
+
+    // Manager accounts need the sign-up code — without this gate, anyone visiting the
+    // deployed site could register themselves as a manager and run the restaurant.
+    if (role === 'manager') {
+      const expected = process.env.MANAGER_SIGNUP_CODE || 'BISTRO-ADMIN';
+      if (managerCode !== expected) {
+        throw new AppError(403, 'Invalid manager code. Ask the restaurant owner for it.');
+      }
+    }
+
+    const result = await authService.registerCustomer({
+      email, password, name, phone,
+      role: role === 'manager' ? 'manager' : 'customer',
+    });
     res.status(201).json({ success: true, data: result });
   } catch (error) {
     next(error);

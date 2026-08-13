@@ -86,18 +86,19 @@ type FeedbackAnalytics = {
   oneStarCount: number; fiveStarCount: number; negativeGrowthPercent: number;
 };
 
-type ActiveTab = 'floor' | 'reservations' | 'waitlist' | 'orders' | 'billing' | 'inventory' | 'analytics' | 'staff' | 'feedback';
+type ActiveTab = 'floor' | 'reservations' | 'waitlist' | 'orders' | 'menu' | 'billing' | 'inventory' | 'analytics' | 'staff' | 'feedback';
 
-const tabLabels: Record<ActiveTab, string> = {
-  floor: 'Floor',
-  reservations: 'Reservations',
-  waitlist: 'Waitlist',
-  orders: 'Orders',
-  billing: 'Billing',
-  inventory: 'Inventory',
-  analytics: 'Analytics',
-  staff: 'Staff',
-  feedback: 'Feedback',
+const tabLabels: Record<ActiveTab, { icon: string; label: string }> = {
+  floor: { icon: '🗺️', label: 'Floor' },
+  reservations: { icon: '📅', label: 'Reservations' },
+  waitlist: { icon: '⏳', label: 'Waitlist' },
+  orders: { icon: '🧾', label: 'Orders' },
+  menu: { icon: '🍽️', label: 'Menu' },
+  billing: { icon: '💳', label: 'Billing' },
+  inventory: { icon: '📦', label: 'Inventory' },
+  analytics: { icon: '📈', label: 'Analytics' },
+  staff: { icon: '🧑‍🍳', label: 'Staff' },
+  feedback: { icon: '⭐', label: 'Feedback' },
 };
 
 const MEAL_PERIOD_COLORS: Record<string, string> = {
@@ -197,7 +198,8 @@ export function Dashboard() {
   const [dishTimeline, setDishTimeline] = useState<DishTimelineRow[]>([]);
   const [showDishForm, setShowDishForm] = useState(false);
   const [dishForm, setDishForm] = useState({ name: '', description: '', price: '', category: 'Mains' });
-  const [orderMsg, setOrderMsg] = useState<string | null>(null);
+  const [menuDishes, setMenuDishes] = useState<Array<{ id: string; name: string; description: string; price: number; category: string }>>([]);
+  const [menuMsg, setMenuMsg] = useState<string | null>(null);
   const [stats, setStats] = useState({ occupiedTables: 0, reservedTables: 0, pendingWaitlist: 0, occupancyRate: 0 });
   const [selectedTable, setSelectedTable] = useState<TableItem | null>(null);
   const [clearMsg, setClearMsg] = useState<string | null>(null);
@@ -298,6 +300,12 @@ export function Dashboard() {
     if (timelineRes.ok) setDishTimeline(tp.data ?? []);
   };
 
+  const refreshMenu = async () => {
+    const res = await authFetch('/api/v1/dishes');
+    const p = await res.json().catch(() => ({}));
+    if (res.ok) setMenuDishes(p.data ?? []);
+  };
+
   const handleAddDish = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!dishForm.name.trim() || !dishForm.price) return;
@@ -308,7 +316,8 @@ export function Dashboard() {
     if (ok) {
       setDishForm({ name: '', description: '', price: '', category: 'Mains' });
       setShowDishForm(false);
-      setOrderMsg(`✅ Dish added to the menu. Set its recipe in the Billing tab so inventory deducts correctly.`);
+      setMenuMsg(`✅ Dish added to the menu. Set its recipe in the Billing tab so inventory deducts correctly.`);
+      await refreshMenu();
     }
   };
 
@@ -381,6 +390,7 @@ export function Dashboard() {
   useEffect(() => { void refreshDashboard(); }, []);
   useEffect(() => {
     if (activeTab === 'orders') void refreshOrders();
+    if (activeTab === 'menu') void refreshMenu();
     if (activeTab === 'inventory') void refreshInventory();
     if (activeTab === 'analytics') { void refreshOrders(); void refreshSalesAnalytics(); }
     if (activeTab === 'staff') void refreshStaff();
@@ -598,21 +608,24 @@ export function Dashboard() {
           <StatCard label="Occupancy" value={`${stats.occupancyRate}%`} tone="text-ink" sub={occupancyLabel} />
         </section>
 
-        {/* Tabs — scroll on narrow screens instead of wrapping. */}
-        <nav aria-label="Console sections" className="rail-scroll -mx-4 mb-6 flex gap-1 overflow-x-auto border-b border-line px-4 md:mx-0 md:px-0">
+        {/* Tabs — pill rail; scrolls on narrow screens instead of wrapping. */}
+        <nav aria-label="Console sections" className="rail-scroll -mx-4 mb-6 flex gap-2 overflow-x-auto px-4 py-1 md:mx-0 md:px-0">
           {(Object.keys(tabLabels) as ActiveTab[]).map((tab) => {
             const isActive = activeTab === tab;
             const alerts = tab === 'inventory' ? (invAnalytics?.reorderAlerts?.length ?? 0) : tab === 'orders' ? orders.length : 0;
             return (
               <button key={tab} onClick={() => setActiveTab(tab)}
                 aria-current={isActive ? 'page' : undefined}
-                className={`-mb-px shrink-0 border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
-                  isActive ? 'border-ink text-ink' : 'border-transparent text-ink-soft hover:text-ink'
+                className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold transition ${
+                  isActive
+                    ? 'bg-ink text-white shadow-md'
+                    : 'border border-line bg-white text-ink-soft hover:-translate-y-0.5 hover:border-ink-soft hover:text-ink'
                 }`}>
-                {tabLabels[tab]}
+                <span aria-hidden="true">{tabLabels[tab].icon}</span>
+                {tabLabels[tab].label}
                 {alerts > 0 && (
-                  <span className={`data ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                    tab === 'inventory' ? 'bg-busy/10 text-busy' : 'bg-ink/8 text-ink-soft'
+                  <span className={`data ml-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                    isActive ? 'bg-white/20 text-white' : tab === 'inventory' ? 'bg-busy/10 text-busy' : 'bg-ink/8 text-ink-soft'
                   }`}>{alerts}</span>
                 )}
               </button>
@@ -728,27 +741,45 @@ export function Dashboard() {
                   <StatCard label="Peak Time" value={salesAnalytics.peakTime ?? '—'} tone="text-free" />
                 </div>
               )}
-              <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white/90 shadow-sm">
+              <div className="overflow-x-auto overflow-y-hidden rounded-3xl border border-slate-200 bg-white/90 shadow-sm">
                 <table className="w-full text-left">
-                  <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                    <tr><th className="p-4">Guest</th><th className="p-4">Party</th><th className="p-4">Time</th><th className="p-4">Table</th><th className="p-4">Phone</th><th className="p-4">Status</th><th className="p-4">Reminder</th><th className="p-4">Action</th></tr>
+                  <thead className="bg-slate-900 text-xs font-semibold uppercase tracking-wider text-slate-300">
+                    <tr><th className="p-4">Guest</th><th className="p-4">Party</th><th className="p-4">Time</th><th className="p-4">Table</th><th className="p-4">Status</th><th className="p-4">Reminder</th><th className="p-4 text-right">Action</th></tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
                     {reservations.map(r => (
-                      <tr key={r.id} className="hover:bg-slate-50">
-                        <td className="p-4 font-semibold text-slate-800">{r.guestName}</td>
-                        <td className="p-4">{r.partySize} guests</td>
-                        <td className="p-4">{formatReservationTime(r.time)}</td>
-                        <td className="p-4 font-mono">{r.tableId}</td>
-                        <td className="p-4 text-slate-500">{r.phone}</td>
-                        <td className="p-4"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${r.status === 'No-show' || r.status === 'Cancelled' ? 'bg-rose-100 text-rose-800' : r.status === 'Seated' || r.status === 'Confirmed' ? 'bg-emerald-100 text-emerald-800' : 'bg-sky-100 text-sky-800'}`}>{r.status}</span></td>
-                        <td className="p-4"><span className={`text-xs font-medium ${r.reminderSent ? 'text-emerald-700' : 'text-slate-400'}`}>{r.reminderSent ? '✓ Sent' : 'Pending'}</span></td>
+                      <tr key={r.id} className="transition hover:bg-amber-50/60">
                         <td className="p-4">
-                          {(r.status === 'Reserved' || r.status === 'Confirmed') && <button onClick={() => void handleMarkNoShow(r.id)} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 cursor-pointer">No-show</button>}
+                          <div className="flex items-center gap-3">
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white">
+                              {r.guestName.trim().charAt(0).toUpperCase() || '?'}
+                            </span>
+                            <div className="min-w-0">
+                              <p className="font-semibold text-slate-800 leading-tight">{r.guestName}</p>
+                              <p className="text-xs text-slate-400">{r.phone || 'no phone'}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="p-4"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">👥 {r.partySize}</span></td>
+                        <td className="p-4 font-medium text-slate-800 whitespace-nowrap">🕐 {formatReservationTime(r.time)}</td>
+                        <td className="p-4"><span className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 font-mono text-xs font-bold text-slate-700">{r.tableId}</span></td>
+                        <td className="p-4">
+                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${r.status === 'No-show' || r.status === 'Cancelled' ? 'bg-rose-100 text-rose-800' : r.status === 'Seated' || r.status === 'Confirmed' ? 'bg-emerald-100 text-emerald-800' : 'bg-sky-100 text-sky-800'}`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${r.status === 'No-show' || r.status === 'Cancelled' ? 'bg-rose-500' : r.status === 'Seated' || r.status === 'Confirmed' ? 'bg-emerald-500' : 'bg-sky-500'}`} />
+                            {r.status}
+                          </span>
+                        </td>
+                        <td className="p-4">
+                          <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${r.reminderSent ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>
+                            {r.reminderSent ? '✓ Sent' : '· Pending'}
+                          </span>
+                        </td>
+                        <td className="p-4 text-right">
+                          {(r.status === 'Reserved' || r.status === 'Confirmed') && <button onClick={() => void handleMarkNoShow(r.id)} className="rounded-lg bg-rose-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-700 hover:shadow cursor-pointer">No-show</button>}
                         </td>
                       </tr>
                     ))}
-                    {reservations.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-sm text-slate-400 italic">No reservations yet.</td></tr>}
+                    {reservations.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-sm text-slate-400 italic">No reservations yet.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -757,32 +788,51 @@ export function Dashboard() {
 
           {/* ══ WAITLIST ════════════════════════════════════════════════════ */}
           {activeTab === 'waitlist' && (
-            <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white/90 shadow-sm">
+            <div className="overflow-x-auto overflow-y-hidden rounded-3xl border border-slate-200 bg-white/90 shadow-sm">
               <table className="w-full text-left">
-                <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  <tr><th className="p-4">Queue</th><th className="p-4">Guest</th><th className="p-4">Party size</th><th className="p-4">Preference</th><th className="p-4">Wait</th><th className="p-4">Status</th><th className="p-4 text-right">Actions</th></tr>
+                <thead className="bg-slate-900 text-xs font-semibold uppercase tracking-wider text-slate-300">
+                  <tr><th className="p-4">Queue</th><th className="p-4">Guest</th><th className="p-4">Party</th><th className="p-4">Preference</th><th className="p-4">Wait</th><th className="p-4">Status</th><th className="p-4 text-right">Actions</th></tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
                   {waitlist.map(entry => (
-                    <tr key={entry.id} className="hover:bg-slate-50">
-                      <td className="p-4 font-semibold text-amber-700">#{entry.position}</td>
-                      <td className="p-4 font-semibold text-slate-800">{entry.guestName}</td>
-                      <td className="p-4">{entry.partySize} guests</td>
-                      <td className="p-4 text-slate-500">
-                        {entry.preferredTableId || entry.preferredTime ? (
-                          <>
-                            {entry.preferredTableId && <span className="font-mono">{tables.find(t => t.id === entry.preferredTableId)?.tableNumber ?? entry.preferredTableId}</span>}
-                            {entry.preferredTableId && entry.preferredTime && ' · '}
-                            {entry.preferredTime && formatReservationTime(entry.preferredTime)}
-                          </>
-                        ) : <span className="italic text-slate-400">Any</span>}
+                    <tr key={entry.id} className="transition hover:bg-amber-50/60">
+                      <td className="p-4">
+                        <span className="flex h-9 w-9 items-center justify-center rounded-full bg-amber-100 font-display text-sm font-bold text-amber-800">
+                          {entry.position}
+                        </span>
                       </td>
-                      <td className="p-4 text-slate-500">~{entry.quotedWaitMinutes} mins</td>
-                      <td className="p-4"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${entry.status === 'Notified' ? 'bg-amber-100 text-amber-800' : entry.status === 'Seated' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>{entry.status}</span></td>
+                      <td className="p-4">
+                        <div className="min-w-0">
+                          <p className="font-semibold text-slate-800 leading-tight">{entry.guestName}</p>
+                          <p className="text-xs text-slate-400">{entry.phone || 'no phone'}</p>
+                        </div>
+                      </td>
+                      <td className="p-4"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">👥 {entry.partySize}</span></td>
+                      <td className="p-4">
+                        {entry.preferredTableId || entry.preferredTime ? (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {entry.preferredTableId && (
+                              <span className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 font-mono text-xs font-bold text-slate-700">
+                                {tables.find(t => t.id === entry.preferredTableId)?.tableNumber ?? entry.preferredTableId}
+                              </span>
+                            )}
+                            {entry.preferredTime && (
+                              <span className="rounded-full bg-sky-50 px-2 py-1 text-xs font-medium text-sky-700 whitespace-nowrap">🕐 {formatReservationTime(entry.preferredTime)}</span>
+                            )}
+                          </div>
+                        ) : <span className="text-xs italic text-slate-400">Any table</span>}
+                      </td>
+                      <td className="p-4"><span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 whitespace-nowrap">~{entry.quotedWaitMinutes} min</span></td>
+                      <td className="p-4">
+                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${entry.status === 'Notified' ? 'bg-amber-100 text-amber-800' : entry.status === 'Seated' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${entry.status === 'Notified' ? 'bg-amber-500' : entry.status === 'Seated' ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                          {entry.status}
+                        </span>
+                      </td>
                       <td className="p-4 text-right">
                         <div className="flex justify-end gap-2">
-                          {entry.status === 'Waiting' && <button onClick={() => handleNotifyWaitlist(entry.id)} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 cursor-pointer">Notify</button>}
-                          {entry.status !== 'Seated' && <button onClick={() => handleAssignSeating(entry.id)} className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 cursor-pointer">Assign seat</button>}
+                          {entry.status === 'Waiting' && <button onClick={() => handleNotifyWaitlist(entry.id)} className="rounded-lg bg-amber-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-amber-700 hover:shadow cursor-pointer">🔔 Notify</button>}
+                          {entry.status !== 'Seated' && <button onClick={() => handleAssignSeating(entry.id)} className="rounded-lg bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800 hover:shadow cursor-pointer">🪑 Assign seat</button>}
                         </div>
                       </td>
                     </tr>
@@ -796,37 +846,11 @@ export function Dashboard() {
           {/* ══ ORDERS ══════════════════════════════════════════════════════ */}
           {activeTab === 'orders' && (
             <div className="space-y-8">
-              {orderMsg && (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 flex items-center justify-between">
-                  {orderMsg}
-                  <button onClick={() => setOrderMsg(null)} className="text-emerald-600 hover:text-emerald-900 cursor-pointer text-lg leading-none">×</button>
-                </div>
-              )}
               <div className="grid gap-4 md:grid-cols-3">
                 <StatCard label="Total Orders" value={orders.length} tone="text-ink" />
                 <StatCard label="Total Revenue" value={fmt(totalOrderRevenue)} tone="text-free" />
                 <StatCard label="Avg Bill" value={orders.length > 0 ? fmt(totalOrderRevenue / orders.length) : '₹0'} tone="text-hold" />
               </div>
-
-              <SectionCard title="Menu" sub="Add new dishes to the menu — customers see them immediately."
-                action={<button onClick={() => setShowDishForm(p => !p)} className="rounded-2xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 cursor-pointer">{showDishForm ? 'Hide form' : '+ Add Dish'}</button>}>
-                {showDishForm ? (
-                  <form onSubmit={handleAddDish} className="space-y-3">
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                      <input required value={dishForm.name} onChange={e => setDishForm({ ...dishForm, name: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Dish name" />
-                      <input value={dishForm.description} onChange={e => setDishForm({ ...dishForm, description: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Short description" />
-                      <input required type="number" min="0" step="0.01" value={dishForm.price} onChange={e => setDishForm({ ...dishForm, price: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5" placeholder="Price (₹)" />
-                      <select value={dishForm.category} onChange={e => setDishForm({ ...dishForm, category: e.target.value })} className="rounded-xl border border-slate-300 px-3 py-2.5">
-                        <option>Starters</option><option>Mains</option><option>Desserts</option><option>Drinks</option>
-                      </select>
-                    </div>
-                    <p className="text-xs text-slate-500">After adding, set the dish's recipe (ingredients per serving) in the Billing tab — that's what drives automatic stock deduction.</p>
-                    <div className="flex justify-end"><button type="submit" className="rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800 cursor-pointer">Add Dish</button></div>
-                  </form>
-                ) : (
-                  <p className="text-sm text-slate-500">New dishes appear on the customer menu instantly. Ingredients are managed in the Inventory tab; per-dish recipes in the Billing tab.</p>
-                )}
-              </SectionCard>
               <SectionCard title="Dish order counts" sub="Total quantities ordered across all orders." action={<button onClick={() => void refreshOrders()} className="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 cursor-pointer">Refresh</button>}>
                 {dishStats.length === 0 ? <p className="text-sm text-slate-400 italic">No orders placed yet.</p> : (
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -894,6 +918,69 @@ export function Dashboard() {
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+              </SectionCard>
+            </div>
+          )}
+
+          {/* ══ MENU ════════════════════════════════════════════════════════ */}
+          {activeTab === 'menu' && (
+            <div className="space-y-6">
+              {menuMsg && (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 flex items-center justify-between">
+                  {menuMsg}
+                  <button onClick={() => setMenuMsg(null)} className="text-emerald-600 hover:text-emerald-900 cursor-pointer text-lg leading-none">×</button>
+                </div>
+              )}
+
+              <SectionCard title="Menu card" sub={`${menuDishes.length} dishes on the menu — customers see changes immediately.`}
+                action={<button onClick={() => setShowDishForm(p => !p)} className="rounded-2xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 cursor-pointer">{showDishForm ? 'Hide form' : '+ Add Dish'}</button>}>
+                {showDishForm && (
+                  <form onSubmit={handleAddDish} className="mb-6 space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <input required value={dishForm.name} onChange={e => setDishForm({ ...dishForm, name: e.target.value })} className="rounded-xl border border-slate-300 bg-white px-3 py-2.5" placeholder="Dish name" />
+                      <input value={dishForm.description} onChange={e => setDishForm({ ...dishForm, description: e.target.value })} className="rounded-xl border border-slate-300 bg-white px-3 py-2.5" placeholder="Short description" />
+                      <input required type="number" min="0" step="0.01" value={dishForm.price} onChange={e => setDishForm({ ...dishForm, price: e.target.value })} className="rounded-xl border border-slate-300 bg-white px-3 py-2.5" placeholder="Price (₹)" />
+                      <select value={dishForm.category} onChange={e => setDishForm({ ...dishForm, category: e.target.value })} className="rounded-xl border border-slate-300 bg-white px-3 py-2.5">
+                        <option>Starters</option><option>Mains</option><option>Desserts</option><option>Drinks</option>
+                      </select>
+                    </div>
+                    <p className="text-xs text-slate-500">After adding, set the dish's recipe (ingredients per serving) in the Billing tab — that's what drives automatic stock deduction.</p>
+                    <div className="flex justify-end"><button type="submit" className="rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800 cursor-pointer">Add Dish</button></div>
+                  </form>
+                )}
+
+                {menuDishes.length === 0 ? (
+                  <p className="text-sm text-slate-400 italic">Menu is loading…</p>
+                ) : (
+                  <div className="space-y-8">
+                    {(['Starters', 'Mains', 'Desserts', 'Drinks', ...new Set(menuDishes.map(d => d.category))] as string[])
+                      .filter((c, i, arr) => arr.indexOf(c) === i && menuDishes.some(d => d.category === c))
+                      .map(category => (
+                        <div key={category}>
+                          <div className="mb-3 flex items-center gap-2">
+                            <span className="text-xl" aria-hidden="true">
+                              {category === 'Starters' ? '🥗' : category === 'Mains' ? '🍛' : category === 'Desserts' ? '🍰' : category === 'Drinks' ? '🥤' : '🍴'}
+                            </span>
+                            <h3 className="font-display text-lg font-bold text-slate-800">{category}</h3>
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">
+                              {menuDishes.filter(d => d.category === category).length}
+                            </span>
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                            {menuDishes.filter(d => d.category === category).map(d => (
+                              <div key={d.id} className="group rounded-2xl border border-slate-200 bg-white p-4 transition hover:-translate-y-0.5 hover:border-amber-300 hover:shadow-md">
+                                <div className="flex items-start justify-between gap-3">
+                                  <span className="font-semibold text-slate-800 leading-tight">{d.name}</span>
+                                  <span className="shrink-0 rounded-full bg-amber-50 px-2.5 py-1 text-sm font-bold text-amber-800 tabular">₹{d.price.toFixed(2)}</span>
+                                </div>
+                                <p className="mt-1.5 text-sm leading-relaxed text-slate-500">{d.description}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
                   </div>
                 )}
               </SectionCard>

@@ -84,11 +84,15 @@ export class AuthService {
     }
   }
 
-  async registerCustomer(data: { email: string; password: string; name: string; phone?: string }) {
+  async registerCustomer(data: { email: string; password: string; name: string; phone?: string; role?: UserRole }) {
     const email = data.email.trim().toLowerCase();
     if (!email || !data.password || !data.name) {
       throw new AppError(400, 'Email, password, and name are required');
     }
+
+    // Only ever 'customer' or 'manager', and manager is allowed solely by the
+    // route handler after it has checked the manager sign-up code.
+    const role: UserRole = data.role === 'manager' ? 'manager' : 'customer';
 
     const existing = await this.pool.query('SELECT id FROM users WHERE email = $1', [email]);
     if (existing.rows.length > 0) {
@@ -100,10 +104,10 @@ export class AuthService {
 
     await this.pool.query(
       'INSERT INTO users (id, email, password_hash, name, role, phone) VALUES ($1, $2, $3, $4, $5, $6)',
-      [userId, email, passwordHash, data.name.trim(), 'customer', data.phone?.trim() ?? '']
+      [userId, email, passwordHash, data.name.trim(), role, data.phone?.trim() ?? '']
     );
 
-    return this.buildAuthResponse({ id: userId, email, name: data.name.trim(), role: 'customer', phone: data.phone?.trim() ?? '' });
+    return this.buildAuthResponse({ id: userId, email, name: data.name.trim(), role, phone: data.phone?.trim() ?? '' });
   }
 
   async login(email: string, password: string, expectedRole?: UserRole) {

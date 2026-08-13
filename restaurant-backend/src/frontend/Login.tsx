@@ -107,22 +107,9 @@ export function Login() {
             </button>
           </form>
 
-          {role === 'customer' && (
-            <p className="mt-4 text-center text-sm text-ink-soft">
-              New here? <a href="/register" className="font-semibold text-ink underline underline-offset-2">Create an account</a>
-            </p>
-          )}
-
-          {/*
-            The seeded manager credentials used to be printed here in every environment.
-            On a deployed site that hands anyone a manager login, so it is now
-            development-only and Vite strips it from the production bundle.
-          */}
-          {role === 'manager' && import.meta.env.DEV && (
-            <p className="mt-4 rounded-md border border-line bg-white px-3 py-2.5 text-xs text-ink-soft">
-              Dev seed account: <span className="data">manager@restaurant.com</span> / <span className="data">manager123</span>
-            </p>
-          )}
+          <p className="mt-4 text-center text-sm text-ink-soft">
+            New here? <a href="/register" className="font-semibold text-ink underline underline-offset-2">Create an account</a>
+          </p>
         </div>
       </main>
     </div>
