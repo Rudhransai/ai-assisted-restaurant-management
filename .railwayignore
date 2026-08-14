@@ -1,0 +1,9 @@
+restaurant-backend/node_modules/
+restaurant-backend/dist/
+restaurant-backend/dist-web/
+restaurant-backend/.env
+restaurant-backend/.baileys_auth/
+restaurant-backend/railway-env.txt
+attached_assets/
+AI-Restaurant-Management.pptx
+.git/
