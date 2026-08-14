@@ -1026,7 +1026,7 @@ app.post('/api/v1/payments/webhook', express.text({ type: '*/*' }), async (req, 
 // such as /pay/:token, which is a server-rendered page, not part of the React app.
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const distPath = path.resolve(__dirname, '../dist');
+const distPath = path.resolve(__dirname, '../dist-web');
 if (fs.existsSync(path.join(distPath, 'index.html'))) {
   app.use(express.static(distPath));
   app.get('/{*splat}', (_req, res) => {

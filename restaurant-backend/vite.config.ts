@@ -3,6 +3,10 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  // 'dist-web', not 'dist': a stale committed dist/ once shadowed fresh builds on the
+  // deploy host (cached COPY layers kept resurrecting it). A directory name that never
+  // existed in any old commit or cache cannot be shadowed.
+  build: { outDir: 'dist-web' },
   server: {
     port: 5000,
     host: true,

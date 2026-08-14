@@ -1,0 +1,6 @@
+node_modules/
+dist/
+dist-web/
+.baileys_auth/
+.env
+railway-env.txt
