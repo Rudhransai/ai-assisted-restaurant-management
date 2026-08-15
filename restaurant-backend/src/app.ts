@@ -10,6 +10,12 @@
 // it first guarantees .env is loaded before anything else reads process.env.
 import 'dotenv/config';
 
+// Prefer IPv4 for outbound connections. Cloud containers (Railway et al.) often have
+// no IPv6 route, and Node tries IPv6 first — every SMTP connection to Gmail then dies
+// with ENETUNREACH before reaching the IPv4 address that would have worked.
+import dns from 'dns';
+dns.setDefaultResultOrder('ipv4first');
+
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
