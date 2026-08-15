@@ -76,7 +76,46 @@ export async function sendNotification(
     return { ok: false, provider: 'none', error: 'Missing recipient or content' };
   }
 
-  // ── MAIL ──────────────────────────────────────────────────────────────────
+  // ── MAIL via HTTPS API (Brevo) ─────────────────────────────────────────────
+  // Cloud hosts on free plans (Railway trial, Render free) block outbound SMTP
+  // ports, so Gmail SMTP can never connect from there. When BREVO_API_KEY is set,
+  // mail goes over HTTPS instead — same route WhatsApp uses, works everywhere.
+  // Locally (no key set) the Gmail SMTP path below keeps working unchanged.
+  if (input.type === 'mail' && env('BREVO_API_KEY')) {
+    const from = env('MAIL_FROM') ?? 'Restaurant <no-reply@example.com>';
+    const match = /^(.*)<([^>]+)>\s*$/.exec(from);
+    const senderName = (match?.[1] ?? 'Restaurant').replace(/"/g, '').trim() || 'Restaurant';
+    const senderEmail = (match?.[2] ?? from).trim();
+
+    try {
+      const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: { 'api-key': env('BREVO_API_KEY')!, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sender: { name: senderName, email: senderEmail },
+          to: [{ email: input.recipient }],
+          subject: input.subject ?? 'Notification from the restaurant',
+          textContent: input.content,
+          htmlContent: buildHtmlBody(input.content),
+        }),
+      });
+      const data: any = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        const reason = data?.message ?? `HTTP ${response.status}`;
+        console.error('[NotificationSender] Brevo send failed:', reason);
+        return { ok: false, provider: 'brevo', error: reason };
+      }
+
+      console.log(`[NotificationSender] ✉️  mail sent via Brevo to=${input.recipient} id=${data?.messageId ?? 'unknown'}`);
+      return { ok: true, provider: 'brevo', ...(data?.messageId ? { messageId: data.messageId } : {}) };
+    } catch (err: any) {
+      console.error('[NotificationSender] Brevo send error:', err?.message ?? err);
+      return { ok: false, provider: 'brevo', error: err?.message ?? String(err) };
+    }
+  }
+
+  // ── MAIL (SMTP — local development) ───────────────────────────────────────
   if (input.type === 'mail') {
     const smtpHost = env('MAIL_SMTP_HOST');
     const portRaw  = env('MAIL_SMTP_PORT');
